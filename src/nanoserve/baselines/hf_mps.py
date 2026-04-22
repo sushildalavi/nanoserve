@@ -31,7 +31,9 @@ class HFMPSBackend(Backend):
         if self._tokenizer.pad_token_id is None:
             self._tokenizer.pad_token_id = self._tokenizer.eos_token_id
         self._model = AutoModelForCausalLM.from_pretrained(
-            self.model_spec.path, torch_dtype=torch.float16
+            self.model_spec.path,
+            dtype=torch.float16,
+            attn_implementation="eager",
         ).to(self._device)
         self._model.eval()
 
