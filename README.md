@@ -63,9 +63,11 @@ With `batching_mode=on` and `max_batch_size=4`, the scheduler actually formed ba
 This is a deliberately modest first ablation: closed-loop at c=4, same-length prompts, fixed max_new_tokens, no mid-batch retirement. Phase 2B relaxes all of these and runs the full Poisson load sweep.
 
 **Correctness gates** backing the rows above (all passing):
-- L1 — single-seq greedy output matches HF generate token-exact
-- L2 — two interleaved seqs each match their isolated greedy output
-- L3 — N seqs in a single batched forward step each match isolated greedy output
+- **L1** — single-seq greedy output matches HF generate token-exact
+- **L2** — two interleaved seqs each match their isolated greedy output
+- **L3** — N seqs in a single batched forward step each match isolated greedy output (same-length prompts)
+- **L3-var** (2B) — N seqs of **different** lengths, batched via left-padding + attention_mask, each match isolated greedy output
+- **EOS retirement** (2B) — one seq finishing mid-batch does not corrupt the remaining seqs' outputs
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
