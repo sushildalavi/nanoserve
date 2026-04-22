@@ -12,6 +12,10 @@ class SubmitRequest:
     prompt: str
     max_new_tokens: int
     eos_token_id: int | None = None
+    # if set, skip the chat template + tokenizer and use these prompt token
+    # ids directly. used by the L5-prefix parity test to construct
+    # unambiguous strict-prefix relationships that survive chat templating.
+    prompt_ids: list[int] | None = None
 
 
 @dataclass

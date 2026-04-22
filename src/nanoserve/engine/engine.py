@@ -145,13 +145,16 @@ class NanoServeEngine(EngineService):
 
         seqs: list[Sequence] = []
         for req in reqs:
-            messages = [{"role": "user", "content": req.prompt}]
-            templated = self._tokenizer.apply_chat_template(
-                messages, tokenize=False, add_generation_prompt=True
-            )
-            prompt_ids = self._tokenizer.encode(
-                templated, add_special_tokens=False
-            )
+            if req.prompt_ids is not None:
+                prompt_ids = list(req.prompt_ids)
+            else:
+                messages = [{"role": "user", "content": req.prompt}]
+                templated = self._tokenizer.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                prompt_ids = self._tokenizer.encode(
+                    templated, add_special_tokens=False
+                )
             seqs.append(
                 Sequence(
                     id=next_seq_id(),
