@@ -19,9 +19,10 @@ Phase 1 (measurement first). Benchmark harness, load generator, and baselines la
 - [x] baseline numbers filled in `results/ablations.csv`
 - [x] phase 2A: fixed-shape continuous batching scheduler + L1/L2/L3 parity gates
 - [x] phase 2B: mixed-length (left-padding + masks), EOS retirement, L3-var parity, Poisson sweep λ=1/2/4
+- [x] phase 3A: hand-rolled INT8 weight-only quant + L4-quant parity + sweep (negative finding documented)
+- [ ] phase 3B: MLX or torch 2.6 + torchao for native Metal int8 matmul (next attempt to flip the regime)
 - [ ] paged kv + prefix cache
 - [ ] prometheus + grafana
-- [ ] int8 / int4 quant + eval harness
 
 ## Quickstart
 
@@ -51,6 +52,8 @@ This is the whole point of the project. Every technique is added with its on/off
 | nanoserve  | fp16   | on       | poisson λ=1      | 0.35 | 17 s       | 52 s     | 65 s     | 7.1          | 3.76      |
 | nanoserve  | fp16   | on       | poisson λ=2      | 0.33 | 36 s       | 88 s     | 97 s     | 6.5          | 3.89      |
 | nanoserve  | fp16   | on       | poisson λ=4      | 0.35 | 41 s       | 93 s     | 101 s    | 6.9          | 3.88      |
+| nanoserve  | **int8** | off    | closed-loop c=1  | 0.13 | 271 ms     | 451 ms   | 9.6 s    | 5.5          | 1.00      |
+| nanoserve  | **int8** | on     | closed-loop c=4  | 0.13 | 897 ms     | 1.5 s    | 33.5 s   | 1.5          | 3.23      |
 
 The two HF-MPS rows are the story. Raw forward-pass TTFT on an idle engine is **135 ms** — totally reasonable. Under 2 req/s Poisson arrivals the same engine has p50 TTFT of **247 seconds**, a 1,800× jump. Decode tok/s is identical across both rows (~21.8). Nothing about the model got slower — the engine just can't serve requests in parallel, so the queue grows linearly and by request 100 you're waiting four minutes behind 99 others. This is exactly the bottleneck continuous batching was meant to kill.
 
@@ -72,6 +75,7 @@ This is a deliberately modest first ablation: closed-loop at c=4, same-length pr
 - **L3** — N seqs in a single batched forward step each match isolated greedy output (same-length prompts)
 - **L3-var** (2B) — N seqs of **different** lengths, batched via left-padding + attention_mask, each match isolated greedy output
 - **EOS retirement** (2B) — one seq finishing mid-batch does not corrupt the remaining seqs' outputs
+- **L4-quant** (3A) — INT8 weight-only quantized engine matches fp16 reference on the first 4 greedy tokens (overlap, not exact — quant rounds)
 
 ### Phase 2B — mixed-length batching + Poisson sweep
 
@@ -98,7 +102,24 @@ This is not a failure of the engine. The engine is behaving correctly — correc
 - Going from HF `generate()` (serial λ=2) to nanoserve serial: **0.17 → 0.34 rps**, purely by calling `model.forward` directly instead of going through `generate()`'s sampling and stopping-criteria overhead.
 - Going from fp16 to Q8_0 quantization (llama.cpp): **21.8 → 47.5 decode tok/s**, because now the forward pass *is* memory-bound and batching/quantization both buy real wins.
 
-**What Phase 3 will do:** quantization (Q8_0 and Q4_K_M in our own engine, not just llama.cpp's), then re-run this sweep. Prediction: continuous batching starts paying off once forward passes are memory-bound from quant, not compute-bound from fp16.
+### Phase 3A — INT8 weight-only quantization (negative finding)
+
+The Phase 2B finding said batching doesn't help on TinyLlama-fp16 because forward passes are compute-bound. The natural next step is quantization to shift the regime to memory-bound. Phase 3A implements **hand-rolled INT8 weight-only quantization** ([`src/nanoserve/engine/quant.py`](src/nanoserve/engine/quant.py)): per-row symmetric scales, weights stored as int8, dequant-to-fp16 on every forward pass.
+
+**The hypothesis was wrong, and the result is the most useful thing this phase produced.**
+
+Two things happened:
+
+1. **INT8 weight-only on MPS is ~3× slower than fp16 in serial mode.** Per-seq decode tok/s fell from 30.7 to 5.5. Memory savings worked (272 MB vs 484 MB resident, a 44% drop), but the dequant-on-the-fly cost dominates because **MPS has no native int8 matmul kernel** — every forward materializes a full fp16 weight tensor before calling `torch.nn.functional.linear`. On CUDA with CUTLASS or torchao's int8 kernels, the quantized weight stays int8 through matmul; on MPS that path doesn't exist (yet).
+
+2. **Continuous batching on top of INT8 made it worse, not better.** New `batched_forward_frac` counter (`src/nanoserve/baselines/nanoserve_engine.py`) showed only **0.7%** of forward steps actually used the batched path. The other 99.3% fell through to per-seq decode because mid-stream admissions left sequences at different cache lengths, breaking the same-length precondition for `_can_batch_forward`. So the engine paid all of the dequant overhead and captured almost none of the parallelism.
+
+The L4-quant correctness gate confirms the implementation is right (INT8 matches fp16 on the first 4 greedy tokens for every test prompt). The throughput numbers are an honest demonstration of two distinct constraints:
+
+- **Platform constraint**: weight-only quantization is a CUDA-era optimization. Apple Silicon needs MLX (which has native Metal int4/int8 matmul) or torch ≥ 2.6 + torchao for the savings to materialize. Pinning torch < 2.6 was a deliberate Phase 1 decision for stability; revisiting that pin is the first step of Phase 3B.
+- **Scheduler constraint**: the current admission policy admits new sequences as soon as a slot opens, which produces stable scheduler stats (`avg_batch_size = 3.23`) but unstable per-step batching (`batched_forward_frac = 0.007`). Adding a "synchronized admission" mode that holds new arrivals until the current batch drains is a small change with a measurable upside, also in Phase 3B.
+
+This phase ships the quant infrastructure (engine flag, parity gate, ablation rows) and **publishes the negative result**. The portfolio version of "ship a working continuous-batching engine" is unfortunately closer to "I implemented continuous batching, then implemented INT8 quant, and rigorously documented why neither moved the needle on M3 MPS at TinyLlama scale, with a clear plan for which two changes flip both findings." The next phase tests that plan.
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
