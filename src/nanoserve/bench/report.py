@@ -34,6 +34,11 @@ ABLATION_HEADERS = [
     "p99_e2e_ms",
     "decode_tok_s",
     "mem_peak_mb",
+    "avg_batch_size",
+    "max_batch_size",
+    "admit_wait_p95_ms",
+    "step_overhead_p50_ms",
+    "step_overhead_p95_ms",
 ]
 
 
