@@ -1,0 +1,160 @@
+{
+  "ts": "20260422T213756Z",
+  "commit": "6c50e99",
+  "env": {
+    "python": "3.11.15",
+    "platform": "macOS-26.4.1-arm64-arm-64bit",
+    "machine": "arm64"
+  },
+  "config": {
+    "model": {
+      "name": "tinyllama-1.1b-chat",
+      "backend": "nanoserve",
+      "path": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "quant": "int8",
+      "batching_mode": "continuous",
+      "max_batch_size": 4,
+      "quant_mode": "int8"
+    },
+    "workload": {
+      "kind": "closed-loop",
+      "num_requests": 10,
+      "concurrency": 4,
+      "rate": 2.0,
+      "max_new_tokens": 32,
+      "seed": 0,
+      "prompt_file": "bench_prompts.jsonl"
+    }
+  },
+  "aggregate": {
+    "n": 10,
+    "n_ok": 10,
+    "duration_s": 78.70974206924438,
+    "rps": 0.1270490759733727,
+    "input_tokens_total": 131,
+    "output_tokens_total": 390,
+    "decode_tok_s": 1.4576221139332084,
+    "ttft_p50": 897.3894119262695,
+    "ttft_p95": 1522.087836265564,
+    "ttft_p99": 1522.4896955490112,
+    "tpot_p50": 725.4752786003025,
+    "tpot_p95": 961.066819629985,
+    "e2e_p50": 26886.66343688965,
+    "e2e_p95": 33464.46155309677,
+    "e2e_p99": 33464.67003583908,
+    "queue_p95": 0.0
+  },
+  "mem_peak_mb": 290.375,
+  "records": [
+    {
+      "idx": 0,
+      "arrival_ts": 1776893797.2649899,
+      "start_ts": 1776893797.2649899,
+      "first_token_ts": 1776893797.5953522,
+      "end_ts": 1776893830.019815,
+      "input_tokens": 14,
+      "output_tokens": 38,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 1,
+      "arrival_ts": 1776893797.268942,
+      "start_ts": 1776893797.268942,
+      "first_token_ts": 1776893798.789286,
+      "end_ts": 1776893830.732849,
+      "input_tokens": 12,
+      "output_tokens": 47,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 2,
+      "arrival_ts": 1776893797.269174,
+      "start_ts": 1776893797.269174,
+      "first_token_ts": 1776893798.790648,
+      "end_ts": 1776893830.7333171,
+      "input_tokens": 11,
+      "output_tokens": 40,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 3,
+      "arrival_ts": 1776893797.2693079,
+      "start_ts": 1776893797.2693079,
+      "first_token_ts": 1776893798.791898,
+      "end_ts": 1776893830.73403,
+      "input_tokens": 12,
+      "output_tokens": 32,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 4,
+      "arrival_ts": 1776893830.027128,
+      "start_ts": 1776893830.027128,
+      "first_token_ts": 1776893830.936394,
+      "end_ts": 1776893857.052858,
+      "input_tokens": 12,
+      "output_tokens": 36,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 5,
+      "arrival_ts": 1776893830.7336771,
+      "start_ts": 1776893830.7336771,
+      "first_token_ts": 1776893831.403593,
+      "end_ts": 1776893857.4799302,
+      "input_tokens": 16,
+      "output_tokens": 38,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 6,
+      "arrival_ts": 1776893830.733883,
+      "start_ts": 1776893830.733883,
+      "first_token_ts": 1776893831.405372,
+      "end_ts": 1776893857.481183,
+      "input_tokens": 12,
+      "output_tokens": 35,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 7,
+      "arrival_ts": 1776893830.7342231,
+      "start_ts": 1776893830.7342231,
+      "first_token_ts": 1776893831.4059992,
+      "end_ts": 1776893857.4818199,
+      "input_tokens": 14,
+      "output_tokens": 43,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 8,
+      "arrival_ts": 1776893857.0549812,
+      "start_ts": 1776893857.0549812,
+      "first_token_ts": 1776893857.940494,
+      "end_ts": 1776893875.6619232,
+      "input_tokens": 15,
+      "output_tokens": 43,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 9,
+      "arrival_ts": 1776893857.48229,
+      "start_ts": 1776893857.48229,
+      "first_token_ts": 1776893858.733176,
+      "end_ts": 1776893875.973545,
+      "input_tokens": 13,
+      "output_tokens": 38,
+      "ok": true,
+      "error": null
+    }
+  ]
+}
