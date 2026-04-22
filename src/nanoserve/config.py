@@ -13,6 +13,9 @@ class ModelSpec:
     backend: str
     path: str
     quant: str = "fp16"
+    # nanoserve-engine only
+    batching_mode: str = "serial"
+    max_batch_size: int = 1
 
 
 @dataclass
@@ -53,3 +56,14 @@ TINYLLAMA_GGUF_Q4 = ModelSpec(
     path="models/tinyllama-1.1b-chat.Q4_K_M.gguf",
     quant="Q4_K_M",
 )
+
+
+def tinyllama_nanoserve(batching_mode: str, max_batch_size: int) -> ModelSpec:
+    return ModelSpec(
+        name="tinyllama-1.1b-chat",
+        backend="nanoserve",
+        path="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        quant="fp16",
+        batching_mode=batching_mode,
+        max_batch_size=max_batch_size,
+    )

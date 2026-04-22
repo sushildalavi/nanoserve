@@ -19,6 +19,13 @@ def _make_backend(model: ModelSpec):
     if model.backend == "llama_cpp":
         from nanoserve.baselines.llama_cpp_bin import LlamaCppBackend
         return LlamaCppBackend(model)
+    if model.backend == "nanoserve":
+        from nanoserve.baselines.nanoserve_engine import NanoServeBackend
+        return NanoServeBackend(
+            model,
+            batching_mode=model.batching_mode,
+            max_batch_size=model.max_batch_size,
+        )
     raise ValueError(f"unknown backend: {model.backend}")
 
 
@@ -124,13 +131,16 @@ def run_baseline(model: ModelSpec, workload: WorkloadSpec) -> dict:
     tag = f"{model.backend}_{model.quant}_{workload.kind}"
     dump_run(tag=tag, config=config, records=records, agg=agg, mem_peak_mb=mem_peak)
 
+    batching_flag = "on" if (
+        model.backend == "nanoserve" and model.batching_mode == "continuous"
+    ) else "off"
     row = {
         "ts": now_iso(),
         "commit": git_commit(),
         "backend": model.backend,
         "model": model.name,
         "quant": model.quant,
-        "batching": "off",
+        "batching": batching_flag,
         "paging": "off",
         "prefix_cache": "off",
         "workload": workload.kind,
