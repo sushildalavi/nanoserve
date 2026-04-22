@@ -42,6 +42,9 @@ ABLATION_HEADERS = [
     "batched_forward_frac",
     "forward_p50_ms",
     "forward_p95_ms",
+    "prefix_cache_hit_rate",
+    "prefix_cache_size",
+    "shared_prefix_tokens",
 ]
 
 

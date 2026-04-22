@@ -162,6 +162,7 @@ def run_baseline(model: ModelSpec, workload: WorkloadSpec) -> dict:
         "p99_e2e_ms": round(agg.e2e_p99, 2),
         "decode_tok_s": round(agg.decode_tok_s, 2),
         "mem_peak_mb": round(mem_peak, 1),
+        "shared_prefix_tokens": workload.shared_prefix_tokens,
     }
     row.update(backend.get_stats())
     append_ablation_row(row)
