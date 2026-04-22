@@ -1,10 +1,10 @@
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from itertools import count
 from typing import Any
 
 
-class SeqStatus(str, Enum):
+class SeqStatus(StrEnum):
     WAITING = "waiting"
     PREFILLING = "prefilling"
     DECODING = "decoding"

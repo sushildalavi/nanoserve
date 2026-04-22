@@ -1,6 +1,6 @@
 from dataclasses import dataclass, field
 
-from nanoserve.engine.sequence import Sequence, SeqStatus
+from nanoserve.engine.sequence import SeqStatus, Sequence
 
 
 @dataclass

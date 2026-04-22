@@ -198,6 +198,8 @@ results/runs/
 *.bin
 .DS_Store
 vendor/llama.cpp/
+.claude/
+.venv/
 
 # PyPI configuration file
 .pypirc
