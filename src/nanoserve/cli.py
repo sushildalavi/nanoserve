@@ -55,6 +55,34 @@ def baseline_llamacpp(
     )
 
 
+@baseline_app.command("nanoserve")
+def baseline_nanoserve(
+    batching_mode: str = "serial",
+    max_batch_size: int = 1,
+    workload: str = "closed-loop",
+    num_requests: int = 20,
+    concurrency: int = 1,
+    rate: float = 2.0,
+    max_new_tokens: int = 128,
+):
+    """run the nanoserve engine as a backend. flag-flipped ablation: pass
+    batching_mode=serial vs continuous to fill the phase-2 ablation rows.
+    """
+    from nanoserve.bench.runner import run_baseline
+    from nanoserve.config import WorkloadSpec, tinyllama_nanoserve
+
+    run_baseline(
+        tinyllama_nanoserve(batching_mode=batching_mode, max_batch_size=max_batch_size),
+        WorkloadSpec(
+            kind=workload,
+            num_requests=num_requests,
+            concurrency=concurrency,
+            rate=rate,
+            max_new_tokens=max_new_tokens,
+        ),
+    )
+
+
 @bench_app.command("sweep")
 def bench_sweep():
     typer.echo("sweep not implemented yet")
