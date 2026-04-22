@@ -126,6 +126,20 @@ class NanoServeEngine(EngineService):
                 await driver
                 self._streams.pop(seq_id, None)
 
+    def get_finished_seq(self, seq_id: int) -> Sequence | None:
+        """look up a finished sequence by id. used by callers (tests, runner)
+        that need to read output_ids or timing after stream() completes.
+        caller owns retiring it afterward via retire().
+        """
+        return next(
+            (s for s in self._scheduler.finished if s.id == seq_id), None
+        )
+
+    def retire(self, seq_id: int) -> None:
+        seq = self.get_finished_seq(seq_id)
+        if seq is not None:
+            self._scheduler.retire(seq)
+
     # ---- sync drain loop, runs on a worker thread ----
 
     def _drain_loop(self, seq_id: int) -> None:
@@ -154,11 +168,7 @@ class NanoServeEngine(EngineService):
                     sched.mark_finished(seq, reason=stop)
                     self._emit_done(seq, stop)
 
-            target = next(
-                (s for s in sched.finished if s.id == seq_id), None
-            )
-            if target is not None:
-                sched.retire(target)
+            if any(s.id == seq_id for s in sched.finished):
                 return
 
     def _prefill(self, seq: Sequence, model, tokenizer, device, torch_mod) -> None:
