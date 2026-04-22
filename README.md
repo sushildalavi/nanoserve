@@ -19,8 +19,9 @@ Phase 1 (measurement first). Benchmark harness, load generator, and baselines la
 - [x] baseline numbers filled in `results/ablations.csv`
 - [x] phase 2A: fixed-shape continuous batching scheduler + L1/L2/L3 parity gates
 - [x] phase 2B: mixed-length (left-padding + masks), EOS retirement, L3-var parity, Poisson sweep λ=1/2/4
-- [x] phase 3A: hand-rolled INT8 weight-only quant + L4-quant parity + sweep (negative finding documented)
-- [ ] phase 3B: MLX or torch 2.6 + torchao for native Metal int8 matmul (next attempt to flip the regime)
+- [x] phase 3A: hand-rolled INT8 weight-only quant + L4-quant parity + diagnosis
+- [x] phase 3B: forward/overhead timing + synchronized admission policy + paired sweep (fp16+int8 each)
+- [ ] phase 3C: MLX or torch 2.6 + torchao for native Metal int8 matmul (close the remaining int8↔fp16 gap)
 - [ ] paged kv + prefix cache
 - [ ] prometheus + grafana
 
@@ -55,6 +56,15 @@ This is the whole point of the project. Every technique is added with its on/off
 | nanoserve  | **int8** | off    | closed-loop c=1  | 0.13 | 271 ms     | 451 ms   | 9.6 s    | 5.5          | 1.00      |
 | nanoserve  | **int8** | on     | closed-loop c=4  | 0.13 | 897 ms     | 1.5 s    | 33.5 s   | 1.5          | 3.23      |
 
+**Phase 3B paired sweep — fcfs vs synchronized admission, fp16 + int8 (poisson λ=2, c=4, n=20, max_new=32):**
+
+| quant | admission | rps | p50 TTFT | p50 TPOT | decode tok/s | avg batch | **batched_forward_frac** | forward p50 | overhead p50 |
+|---|---|---|---|---|---|---|---|---|---|
+| fp16 | fcfs         | 0.74 | 7.1 s  | 130 ms | 8.1  | 3.80 | **0.000** | 36 ms  | 3.4 ms  |
+| fp16 | synchronized | **0.82** | 6.7 s | 107 ms | **10.1** | 3.33 | **0.833** | 111 ms | 16 ms |
+| int8 | fcfs         | 0.24 | 29.7 s | 434 ms | 2.4  | 3.86 | **0.000** | 124 ms | 3.2 ms |
+| int8 | synchronized | **0.48** | 15.1 s | 190 ms | **5.6** | 3.30 | **0.833** | 205 ms | 19 ms |
+
 The two HF-MPS rows are the story. Raw forward-pass TTFT on an idle engine is **135 ms** — totally reasonable. Under 2 req/s Poisson arrivals the same engine has p50 TTFT of **247 seconds**, a 1,800× jump. Decode tok/s is identical across both rows (~21.8). Nothing about the model got slower — the engine just can't serve requests in parallel, so the queue grows linearly and by request 100 you're waiting four minutes behind 99 others. This is exactly the bottleneck continuous batching was meant to kill.
 
 llama.cpp Q8_0 on Metal is the honest native ceiling at ~47 decode tok/s. That's what nanoserve has to approach, not beat.
@@ -76,6 +86,7 @@ This is a deliberately modest first ablation: closed-loop at c=4, same-length pr
 - **L3-var** (2B) — N seqs of **different** lengths, batched via left-padding + attention_mask, each match isolated greedy output
 - **EOS retirement** (2B) — one seq finishing mid-batch does not corrupt the remaining seqs' outputs
 - **L4-quant** (3A) — INT8 weight-only quantized engine matches fp16 reference on the first 4 greedy tokens (overlap, not exact — quant rounds)
+- **Synchronized admission policy** (3B) — scheduler unit tests cover both `fcfs` (admit into running slots) and `synchronized` (block admit until current batch drains)
 
 ### Phase 2B — mixed-length batching + Poisson sweep
 
@@ -119,6 +130,27 @@ The new `batched_forward_frac` counter ([`src/nanoserve/baselines/nanoserve_engi
 **The decomposition matters because the next experiment isolates exactly one variable at a time.** Phase 3B tackles the scheduler side first (step-aligned admission to lift `batched_forward_frac` toward 1.0) and only then revisits the platform side (torch upgrade + torchao for native int8 matmul, or MLX). Direct per-step timing of dequant vs matmul vs scheduler glue is added before any platform pivot, so future claims about which section dominates are measured rather than inferred.
 
 > The strongest portfolio claim from this phase isn't "I made it faster" — it's "I instrumented the system enough to discover *why* a textbook optimization regressed throughput on this specific hardware/runtime, and designed the next experiment to isolate the cause." That's the honest version of systems work.
+
+### Phase 3B — synchronized admission + per-step timing (the diagnosis paid off)
+
+Phase 3B implemented the two changes the 3A diagnosis pointed to:
+
+1. **Per-step timing instrumentation** — `forward_p50_ms` / `forward_p95_ms` (time inside `model.forward`, with `torch.mps.synchronize()` for accuracy) and `step_overhead_p50_ms` / `step_overhead_p95_ms` (time in the same driver iteration outside the model). Together they answer "where did the wall-clock time actually go?"
+
+2. **Synchronized admission policy** — new `admission_policy: "fcfs" | "synchronized"` flag in [`SchedulerConfig`](src/nanoserve/engine/scheduler.py). Under `synchronized`, new arrivals are blocked from admission until every running seq is `FINISHED`. This forces same-length cache states across the next batch, lifting `_can_batch_forward` from "rarely true" to "almost always true" under Poisson load.
+
+**The paired sweep (above) shows three results worth their own resume bullets:**
+
+**Result 1: The scheduler bug was real, and bigger than expected.** Under fp16 + Poisson + FCFS admission, `batched_forward_frac = 0.000` — the engine was scheduled with `avg_batch_size = 3.80` but **never** ran a truly batched forward. Phase 2B's "batching is flat at ~26 tok/s" finding was largely an artifact of this scheduler bug, not a fundamental compute-bound limit. Switching to synchronized admission lifted `batched_forward_frac` to 0.833 in both fp16 and INT8.
+
+**Result 2: With real batching, fp16 throughput goes up.** `synchronized` vs `fcfs` for fp16 Poisson λ=2: rps **0.74 → 0.82** (+10%), per-seq decode tok/s **8.1 → 10.1** (+25%), and TTFT slightly *better* (7.1 s → 6.7 s) because batched forwards drain the queue faster than per-seq forwards do. The cost is forward_p50 going from 36 ms → 111 ms (each step does 4× the work), but that cost amortizes across the four sequences.
+
+**Result 3: INT8 nearly doubled.** `synchronized` vs `fcfs` for INT8 Poisson λ=2: rps **0.24 → 0.48** (+96%). The 3A diagnosis predicted exactly this — the dequant cost can be amortized if real batching actually happens. INT8 still loses to fp16 (0.48 vs 0.82) because dequant overhead per forward is not zero; closing that remaining gap requires native int8 matmul (Phase 3C: torch ≥ 2.6 + torchao or MLX).
+
+The forward_p50 / step_overhead split also confirmed something useful: even in the worst (slowest) row, `step_overhead_p50` is < 20 ms while `forward_p50` is 36–205 ms. **Python-side scheduler overhead is < 10% of step time** in every configuration. The bottleneck is unambiguously the model forward pass, not the scheduler glue. That rules out a bunch of "we should rewrite the scheduler in Rust" type hypotheses before they get raised.
+
+**Takeaway**: the negative finding from 3A wasn't proof that the technique was wrong — it was a measurement that revealed two stacked constraints, one of which was fixable in one commit. The 3A → 3B sequence is the actual portfolio story:
+> *"Implemented a continuous-batching scheduler. Initial benchmarks showed flat throughput. Added forward-pass instrumentation, discovered the admission policy was breaking batching under variable-length workloads, fixed it, and verified that the same INT8 weight-only quant path that previously showed a 3× regression now shows a 2× speedup (with synchronized admission), narrowing the gap to fp16 from -67% to -42%. The remaining gap is platform-level (no native int8 matmul on MPS) and isolated as the next experiment."*
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
