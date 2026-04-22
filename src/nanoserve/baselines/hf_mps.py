@@ -36,6 +36,7 @@ class HFMPSBackend(Backend):
             attn_implementation="eager",
         ).to(self._device)
         self._model.eval()
+        self._model.generation_config.max_length = None
 
     async def stop(self) -> None:
         self._model = None
