@@ -21,11 +21,13 @@ class NanoServeBackend(Backend):
         batching_mode: str = "serial",
         max_batch_size: int = 1,
         quant_mode: str = "none",
+        admission_policy: str = "fcfs",
     ):
         self.model_spec = model
         self.batching_mode = batching_mode
         self.max_batch_size = max_batch_size
         self.quant_mode = quant_mode
+        self.admission_policy = admission_policy
         self._engine: NanoServeEngine | None = None
         self._final_stats: dict = {}
 
@@ -35,6 +37,7 @@ class NanoServeBackend(Backend):
             max_batch_size=self.max_batch_size,
             batching_mode=self.batching_mode,
             quant_mode=self.quant_mode,
+            admission_policy=self.admission_policy,
         )
         await self._engine.start()
 

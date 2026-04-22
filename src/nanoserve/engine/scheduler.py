@@ -7,10 +7,18 @@ from nanoserve.engine.sequence import SeqStatus, Sequence
 class SchedulerConfig:
     max_batch_size: int = 8
     batching_mode: str = "continuous"  # "continuous" or "serial"
+    # admission_policy: "fcfs" admits as soon as a slot opens (default,
+    # matches phase 2/3a behavior). "synchronized" holds new arrivals until
+    # every running seq is FINISHED, then admits up to max_batch_size in
+    # one shot. synchronized fixes the batched_forward_frac collapse seen
+    # under variable-length poisson workloads at the cost of higher TTFT.
+    admission_policy: str = "fcfs"
 
     def __post_init__(self):
         if self.batching_mode not in ("continuous", "serial"):
             raise ValueError(f"bad batching_mode: {self.batching_mode}")
+        if self.admission_policy not in ("fcfs", "synchronized"):
+            raise ValueError(f"bad admission_policy: {self.admission_policy}")
         if self.max_batch_size < 1:
             raise ValueError("max_batch_size must be >= 1")
 
@@ -57,6 +65,11 @@ class Scheduler:
     def _room(self) -> int:
         if self.cfg.batching_mode == "serial":
             return max(0, 1 - len(self.running))
+        if self.cfg.admission_policy == "synchronized" and self.running:
+            # block new admits until the current batch fully drains. this is
+            # the fix for batched_forward_frac collapsing under poisson load
+            # — keeps every admitted seq at the same cache length.
+            return 0
         return max(0, self.cfg.max_batch_size - len(self.running))
 
     def admit_ready(self) -> list[Sequence]:

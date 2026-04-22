@@ -189,3 +189,66 @@ def test_bad_batching_mode_rejected():
 def test_bad_max_batch_rejected():
     with pytest.raises(ValueError):
         SchedulerConfig(max_batch_size=0)
+
+
+def test_bad_admission_policy_rejected():
+    with pytest.raises(ValueError):
+        SchedulerConfig(admission_policy="lol")
+
+
+def test_synchronized_policy_blocks_admit_while_running():
+    s = Scheduler(
+        cfg=SchedulerConfig(
+            max_batch_size=4, admission_policy="synchronized"
+        )
+    )
+    a, b, c = _seq(), _seq(), _seq()
+    for q in (a, b, c):
+        s.submit(q)
+    first = s.admit_ready()
+    assert {x.id for x in first} == {a.id, b.id, c.id}
+    s.mark_prefill_done(a)
+    s.mark_finished(a, reason="max_tokens")
+    s.submit(_seq())
+    blocked = s.admit_ready()
+    assert blocked == [], (
+        "synchronized policy must block admit while any seq is still running"
+    )
+
+
+def test_synchronized_policy_admits_after_drain():
+    s = Scheduler(
+        cfg=SchedulerConfig(
+            max_batch_size=2, admission_policy="synchronized"
+        )
+    )
+    a, b = _seq(), _seq()
+    for q in (a, b):
+        s.submit(q)
+    first = s.admit_ready()
+    assert len(first) == 2
+    for x in first:
+        s.mark_prefill_done(x)
+        s.mark_finished(x, reason="max_tokens")
+    c, d = _seq(), _seq()
+    s.submit(c)
+    s.submit(d)
+    second = s.admit_ready()
+    assert {x.id for x in second} == {c.id, d.id}
+
+
+def test_fcfs_policy_admits_into_running_slots():
+    s = Scheduler(
+        cfg=SchedulerConfig(
+            max_batch_size=4, admission_policy="fcfs"
+        )
+    )
+    a = _seq()
+    s.submit(a)
+    s.admit_ready()
+    s.mark_prefill_done(a)
+    # a is still running. fcfs should still admit b into the spare slot.
+    b = _seq()
+    s.submit(b)
+    second = s.admit_ready()
+    assert second == [b]

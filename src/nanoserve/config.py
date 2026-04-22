@@ -17,6 +17,7 @@ class ModelSpec:
     batching_mode: str = "serial"
     max_batch_size: int = 1
     quant_mode: str = "none"  # "none" | "int8" — nanoserve engine internal quant
+    admission_policy: str = "fcfs"  # "fcfs" | "synchronized"
 
 
 @dataclass
@@ -63,6 +64,7 @@ def tinyllama_nanoserve(
     batching_mode: str,
     max_batch_size: int,
     quant_mode: str = "none",
+    admission_policy: str = "fcfs",
 ) -> ModelSpec:
     return ModelSpec(
         name="tinyllama-1.1b-chat",
@@ -72,4 +74,5 @@ def tinyllama_nanoserve(
         batching_mode=batching_mode,
         max_batch_size=max_batch_size,
         quant_mode=quant_mode,
+        admission_policy=admission_policy,
     )

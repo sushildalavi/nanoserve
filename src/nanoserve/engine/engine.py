@@ -31,6 +31,7 @@ class NanoServeEngine(EngineService):
         max_batch_size: int = 1,
         batching_mode: str = "serial",
         quant_mode: str = "none",
+        admission_policy: str = "fcfs",
     ):
         self.model_spec = model_spec
         self._device = "mps"
@@ -43,6 +44,7 @@ class NanoServeEngine(EngineService):
             cfg=SchedulerConfig(
                 max_batch_size=max_batch_size,
                 batching_mode=batching_mode,
+                admission_policy=admission_policy,
             )
         )
         self._streams: dict[int, asyncio.Queue] = {}

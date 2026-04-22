@@ -60,6 +60,7 @@ def baseline_nanoserve(
     batching_mode: str = "serial",
     max_batch_size: int = 1,
     quant_mode: str = "none",
+    admission_policy: str = "fcfs",
     workload: str = "closed-loop",
     num_requests: int = 20,
     concurrency: int = 1,
@@ -67,7 +68,8 @@ def baseline_nanoserve(
     max_new_tokens: int = 128,
 ):
     """run the nanoserve engine as a backend. flag-flipped ablation: pass
-    batching_mode=serial vs continuous, quant_mode=none vs int8, etc.
+    batching_mode=serial|continuous, quant_mode=none|int8,
+    admission_policy=fcfs|synchronized, etc.
     """
     from nanoserve.bench.runner import run_baseline
     from nanoserve.config import WorkloadSpec, tinyllama_nanoserve
@@ -77,6 +79,7 @@ def baseline_nanoserve(
             batching_mode=batching_mode,
             max_batch_size=max_batch_size,
             quant_mode=quant_mode,
+            admission_policy=admission_policy,
         ),
         WorkloadSpec(
             kind=workload,
