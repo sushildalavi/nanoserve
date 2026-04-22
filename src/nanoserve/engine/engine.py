@@ -92,31 +92,47 @@ class NanoServeEngine(EngineService):
         return len(self._tokenizer.encode(text, add_special_tokens=False))
 
     async def submit(self, req: SubmitRequest) -> int:
+        ids = await self.submit_many([req])
+        return ids[0]
+
+    async def submit_many(self, reqs: list[SubmitRequest]) -> list[int]:
+        """submit multiple requests under one scheduler lock. the driver
+        therefore sees all of them in `waiting` when it next runs admit,
+        which is what lets fixed-shape batched forwards fire on day 4.
+        """
         if self._tokenizer is None:
             raise RuntimeError("engine not started")
 
-        messages = [{"role": "user", "content": req.prompt}]
-        templated = self._tokenizer.apply_chat_template(
-            messages, tokenize=False, add_generation_prompt=True
-        )
-        prompt_ids = self._tokenizer.encode(templated, add_special_tokens=False)
+        seqs: list[Sequence] = []
+        for req in reqs:
+            messages = [{"role": "user", "content": req.prompt}]
+            templated = self._tokenizer.apply_chat_template(
+                messages, tokenize=False, add_generation_prompt=True
+            )
+            prompt_ids = self._tokenizer.encode(
+                templated, add_special_tokens=False
+            )
+            seqs.append(
+                Sequence(
+                    id=next_seq_id(),
+                    prompt_ids=prompt_ids,
+                    max_new_tokens=req.max_new_tokens,
+                    eos_token_id=(
+                        req.eos_token_id
+                        if req.eos_token_id is not None
+                        else self._tokenizer.eos_token_id
+                    ),
+                    submit_ts=time.time(),
+                )
+            )
 
-        seq = Sequence(
-            id=next_seq_id(),
-            prompt_ids=prompt_ids,
-            max_new_tokens=req.max_new_tokens,
-            eos_token_id=(
-                req.eos_token_id
-                if req.eos_token_id is not None
-                else self._tokenizer.eos_token_id
-            ),
-            submit_ts=time.time(),
-        )
-        self._streams[seq.id] = asyncio.Queue()
+        for s in seqs:
+            self._streams[s.id] = asyncio.Queue()
         with self._sched_lock:
-            self._scheduler.submit(seq)
+            for s in seqs:
+                self._scheduler.submit(s)
         self._wake.set()
-        return seq.id
+        return [s.id for s in seqs]
 
     async def stream(self, seq_id: int) -> AsyncIterator[TokenEvent]:
         if seq_id not in self._streams:
@@ -255,28 +271,31 @@ class NanoServeEngine(EngineService):
     def _stack_caches(caches: list, DynamicCacheCls):
         """concat per-seq DynamicCache objects along batch dim. all inputs
         must share the same seq_len per layer (2A precondition).
+        transformers DynamicCache exposes per-layer tensors via cache.layers[i].keys / .values.
         """
         import torch
 
         merged = DynamicCacheCls()
-        num_layers = len(caches[0].key_cache)
+        num_layers = len(caches[0])
         for layer in range(num_layers):
-            keys = torch.cat([c.key_cache[layer] for c in caches], dim=0)
-            values = torch.cat([c.value_cache[layer] for c in caches], dim=0)
+            keys = torch.cat([c.layers[layer].keys for c in caches], dim=0)
+            values = torch.cat([c.layers[layer].values for c in caches], dim=0)
             merged.update(keys, values, layer)
         return merged
 
     @staticmethod
     def _split_cache(batched, n: int, DynamicCacheCls) -> list:
-        """split a batched DynamicCache back into n per-seq caches."""
+        """split a batched DynamicCache back into n per-seq caches by slicing
+        along the batch dim of each layer's keys/values.
+        """
+        num_layers = len(batched)
         out = []
-        num_layers = len(batched.key_cache)
         for i in range(n):
             per = DynamicCacheCls()
             for layer in range(num_layers):
                 per.update(
-                    batched.key_cache[layer][i : i + 1],
-                    batched.value_cache[layer][i : i + 1],
+                    batched.layers[layer].keys[i : i + 1].contiguous(),
+                    batched.layers[layer].values[i : i + 1].contiguous(),
                     layer,
                 )
             out.append(per)
