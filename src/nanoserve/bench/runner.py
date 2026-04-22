@@ -6,7 +6,7 @@ import psutil
 from rich.console import Console
 
 from nanoserve.bench.metrics import RequestRecord, aggregate
-from nanoserve.bench.report import append_ablation_row, dump_run, now_iso
+from nanoserve.bench.report import append_ablation_row, dump_run, git_commit, now_iso
 from nanoserve.bench.workload import build_workload, load_prompts
 from nanoserve.config import PROMPTS_DIR, ModelSpec, WorkloadSpec
 
@@ -128,6 +128,7 @@ def run_baseline(model: ModelSpec, workload: WorkloadSpec) -> dict:
 
     row = {
         "ts": now_iso(),
+        "commit": git_commit(),
         "backend": model.backend,
         "model": model.name,
         "quant": model.quant,
