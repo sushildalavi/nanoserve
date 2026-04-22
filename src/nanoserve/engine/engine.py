@@ -99,13 +99,21 @@ class NanoServeEngine(EngineService):
             n, saved = quantize_model_int8_weight_only(self._model)
             self.num_layers_quantized = n
             self.weight_bytes_saved = saved
-            # reclaim fp16 weight memory held in cached tensors
+        elif self.quant_mode == "torchao_int8":
+            # torchao's tensor-subclass int8 weight-only path. on MPS this
+            # still goes through fp16 matmul (no native int8 kernel) but
+            # uses torchao's optimized dequant path, which may be cheaper
+            # than our hand-rolled module's per-call dequant.
+            from torchao.quantization import int8_weight_only, quantize_
+            quantize_(self._model, int8_weight_only())
+            self.num_layers_quantized = -1  # torchao manages this internally
+        elif self.quant_mode != "none":
+            raise ValueError(f"unknown quant_mode: {self.quant_mode}")
+        if self.quant_mode != "none":
             import gc
             gc.collect()
             if torch.backends.mps.is_available():
                 torch.mps.empty_cache()
-        elif self.quant_mode != "none":
-            raise ValueError(f"unknown quant_mode: {self.quant_mode}")
 
         self._start_driver()
 
