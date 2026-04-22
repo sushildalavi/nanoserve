@@ -177,11 +177,19 @@ class NanoServeEngine(EngineService):
             # prefill any newly admitted sequences
             with self._sched_lock:
                 admitted = self._scheduler.admit_ready()
-            for seq in admitted:
-                seq.admit_ts = time.time()
-                self._prefill(seq, torch)
-                with self._sched_lock:
-                    self._scheduler.mark_prefill_done(seq)
+
+            if len(admitted) > 1 and self._scheduler.cfg.batching_mode == "continuous":
+                self._prefill_batch(admitted, torch)
+                for seq in admitted:
+                    seq.admit_ts = time.time()
+                    with self._sched_lock:
+                        self._scheduler.mark_prefill_done(seq)
+            else:
+                for seq in admitted:
+                    seq.admit_ts = time.time()
+                    self._prefill(seq, torch)
+                    with self._sched_lock:
+                        self._scheduler.mark_prefill_done(seq)
 
             # step every currently-decoding sequence.
             with self._sched_lock:
@@ -212,10 +220,51 @@ class NanoServeEngine(EngineService):
         with torch_mod.inference_mode():
             out = self._model(input_ids=input_ids, use_cache=True)
         seq.past_kv = out.past_key_values
+        seq.pad_len = 0
         next_tok = int(out.logits[0, -1].argmax().item())
         seq.append_token(next_tok)
         seq.first_token_ts = time.time()
         self._emit_token(seq, next_tok)
+
+    def _prefill_batch(self, seqs: list[Sequence], torch_mod) -> None:
+        """batched prefill with left-padding. each seq ends up with a cache
+        of length max_prompt_len; seq.pad_len records how many of those are
+        pad tokens so later decode steps can mask them correctly.
+        """
+        from transformers import DynamicCache
+
+        pad_id = self._tokenizer.pad_token_id
+        max_len = max(len(s.prompt_ids) for s in seqs)
+
+        padded_ids = []
+        attn_mask = []
+        for s in seqs:
+            pad = max_len - len(s.prompt_ids)
+            padded_ids.append([pad_id] * pad + list(s.prompt_ids))
+            attn_mask.append([0] * pad + [1] * len(s.prompt_ids))
+            s.pad_len = pad
+
+        input_ids = torch_mod.tensor(padded_ids, device=self._device)
+        attention_mask = torch_mod.tensor(attn_mask, device=self._device)
+
+        with torch_mod.inference_mode():
+            out = self._model(
+                input_ids=input_ids,
+                attention_mask=attention_mask,
+                use_cache=True,
+            )
+
+        # split cache per seq. each one carries max_len entries (with pad_len
+        # leading entries being from padding positions).
+        per_seq_caches = self._split_cache(out.past_key_values, len(seqs), DynamicCache)
+
+        now = time.time()
+        for i, s in enumerate(seqs):
+            s.past_kv = per_seq_caches[i]
+            next_tok = int(out.logits[i, -1].argmax().item())
+            s.append_token(next_tok)
+            s.first_token_ts = now
+            self._emit_token(s, next_tok)
 
     def _can_batch_forward(self, batch: list[Sequence]) -> bool:
         """batched forward is safe only when the scheduler is in continuous
@@ -239,9 +288,10 @@ class NanoServeEngine(EngineService):
             return cache[0][0].shape[-2]
 
     def _decode_batch(self, batch: list[Sequence], torch_mod) -> None:
-        """one forward pass for N same-length sequences.
-        stacks per-seq caches along the batch dim, runs model.forward once,
-        then splits the updated cache back onto each seq.
+        """one forward pass for N sequences with same physical cache length.
+        stacks per-seq caches, builds an attention_mask that zeroes out the
+        leading pad_len positions of each seq, runs one model.forward,
+        splits the updated cache back to each seq.
         """
         from transformers import DynamicCache
 
@@ -249,10 +299,21 @@ class NanoServeEngine(EngineService):
         input_ids = torch_mod.tensor(last_tokens, device=self._device)
 
         batched = self._stack_caches([s.past_kv for s in batch], DynamicCache)
+        cache_len = int(batched.get_seq_length())
+
+        # mask: [N, cache_len + 1]. for each row, first pad_len entries are
+        # 0, everything after is 1 (real prompt tokens, generated tokens,
+        # and the current input token).
+        attn_mask = []
+        for s in batch:
+            row = [0] * s.pad_len + [1] * (cache_len + 1 - s.pad_len)
+            attn_mask.append(row)
+        attention_mask = torch_mod.tensor(attn_mask, device=self._device)
 
         with torch_mod.inference_mode():
             out = self._model(
                 input_ids=input_ids,
+                attention_mask=attention_mask,
                 past_key_values=batched,
                 use_cache=True,
             )
@@ -304,12 +365,13 @@ class NanoServeEngine(EngineService):
     def _decode_one(self, seq: Sequence, torch_mod) -> None:
         last_tok = seq.output_ids[-1]
         input_ids = torch_mod.tensor([[last_tok]], device=self._device)
+        kwargs = {"past_key_values": seq.past_kv, "use_cache": True}
+        if seq.pad_len > 0:
+            cache_len = int(seq.past_kv.get_seq_length())
+            mask = [0] * seq.pad_len + [1] * (cache_len + 1 - seq.pad_len)
+            kwargs["attention_mask"] = torch_mod.tensor([mask], device=self._device)
         with torch_mod.inference_mode():
-            out = self._model(
-                input_ids=input_ids,
-                past_key_values=seq.past_kv,
-                use_cache=True,
-            )
+            out = self._model(input_ids=input_ids, **kwargs)
         seq.past_kv = out.past_key_values
         next_tok = int(out.logits[0, -1].argmax().item())
         seq.append_token(next_tok)

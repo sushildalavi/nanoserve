@@ -32,6 +32,9 @@ class Sequence:
     finish_ts: float = 0.0
     eos_token_id: int | None = None
     stop_reason: str | None = None
+    # 2B padding bookkeeping: after batched prefill, cache has max_len entries
+    # but only real_prompt_len of them are real. left-padding count = physical - real.
+    pad_len: int = 0
 
     @property
     def all_ids(self) -> list[int]:
