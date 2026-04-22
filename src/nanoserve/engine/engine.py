@@ -2,11 +2,14 @@
 
 architecture: one persistent background thread drives the scheduler. the
 event loop submits requests and consumes per-seq token queues. this lets
-multiple callers stream concurrently — which is what L2 parity validates.
+multiple callers stream concurrently.
 
-day 3 scope: the driver interleaves sequences in the scheduler but still
-runs decode on one seq at a time inside each step. day 4 replaces the
-per-step inner loop with a batched forward pass.
+day 4 scope: when batching_mode is 'continuous' AND every currently
+decoding seq shares the same past_kv length, a single batched
+model.forward runs one step for all of them. otherwise the driver falls
+back to per-seq decode. fixed-shape 2A constraint: same prompt length,
+same max_new_tokens, no mid-batch retirement — all active seqs stay in
+sync. mixed-length lands in 2B with masks.
 """
 from __future__ import annotations
 
@@ -164,13 +167,19 @@ class NanoServeEngine(EngineService):
                 with self._sched_lock:
                     self._scheduler.mark_prefill_done(seq)
 
-            # step every currently-decoding sequence. day 3: one at a time.
+            # step every currently-decoding sequence.
             with self._sched_lock:
                 batch = self._scheduler.pick_decode_batch()
             if not batch:
                 continue
+
+            if self._can_batch_forward(batch):
+                self._decode_batch(batch, torch)
+            else:
+                for seq in batch:
+                    self._decode_one(seq, torch)
+
             for seq in batch:
-                self._decode_one(seq, torch)
                 stop = seq.should_stop()
                 if stop is not None:
                     seq.finish_ts = time.time()
@@ -191,6 +200,87 @@ class NanoServeEngine(EngineService):
         seq.append_token(next_tok)
         seq.first_token_ts = time.time()
         self._emit_token(seq, next_tok)
+
+    def _can_batch_forward(self, batch: list[Sequence]) -> bool:
+        """batched forward is safe only when the scheduler is in continuous
+        mode AND every seq's cache has identical length. this is the fixed-
+        shape 2A constraint. mixed lengths require masks (2B).
+        """
+        if self._scheduler.cfg.batching_mode != "continuous" or len(batch) < 2:
+            return False
+        first_len = self._cache_len(batch[0])
+        return all(self._cache_len(s) == first_len for s in batch[1:])
+
+    @staticmethod
+    def _cache_len(seq: Sequence) -> int:
+        cache = seq.past_kv
+        if cache is None:
+            return 0
+        try:
+            return int(cache.get_seq_length())
+        except AttributeError:
+            # legacy tuple-of-tuples cache
+            return cache[0][0].shape[-2]
+
+    def _decode_batch(self, batch: list[Sequence], torch_mod) -> None:
+        """one forward pass for N same-length sequences.
+        stacks per-seq caches along the batch dim, runs model.forward once,
+        then splits the updated cache back onto each seq.
+        """
+        from transformers import DynamicCache
+
+        last_tokens = [[s.output_ids[-1]] for s in batch]
+        input_ids = torch_mod.tensor(last_tokens, device=self._device)
+
+        batched = self._stack_caches([s.past_kv for s in batch], DynamicCache)
+
+        with torch_mod.inference_mode():
+            out = self._model(
+                input_ids=input_ids,
+                past_key_values=batched,
+                use_cache=True,
+            )
+
+        new_caches = self._split_cache(out.past_key_values, len(batch), DynamicCache)
+
+        logits = out.logits  # [N, 1, vocab]
+        next_tokens = logits[:, -1].argmax(dim=-1).tolist()
+
+        for i, seq in enumerate(batch):
+            seq.past_kv = new_caches[i]
+            seq.append_token(int(next_tokens[i]))
+            self._emit_token(seq, int(next_tokens[i]))
+
+    @staticmethod
+    def _stack_caches(caches: list, DynamicCacheCls):
+        """concat per-seq DynamicCache objects along batch dim. all inputs
+        must share the same seq_len per layer (2A precondition).
+        """
+        import torch
+
+        merged = DynamicCacheCls()
+        num_layers = len(caches[0].key_cache)
+        for layer in range(num_layers):
+            keys = torch.cat([c.key_cache[layer] for c in caches], dim=0)
+            values = torch.cat([c.value_cache[layer] for c in caches], dim=0)
+            merged.update(keys, values, layer)
+        return merged
+
+    @staticmethod
+    def _split_cache(batched, n: int, DynamicCacheCls) -> list:
+        """split a batched DynamicCache back into n per-seq caches."""
+        out = []
+        num_layers = len(batched.key_cache)
+        for i in range(n):
+            per = DynamicCacheCls()
+            for layer in range(num_layers):
+                per.update(
+                    batched.key_cache[layer][i : i + 1],
+                    batched.value_cache[layer][i : i + 1],
+                    layer,
+                )
+            out.append(per)
+        return out
 
     def _decode_one(self, seq: Sequence, torch_mod) -> None:
         last_tok = seq.output_ids[-1]
