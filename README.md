@@ -21,8 +21,9 @@ Phase 1 (measurement first). Benchmark harness, load generator, and baselines la
 - [x] phase 2B: mixed-length (left-padding + masks), EOS retirement, L3-var parity, Poisson sweep λ=1/2/4
 - [x] phase 3A: hand-rolled INT8 weight-only quant + L4-quant parity + diagnosis
 - [x] phase 3B: forward/overhead timing + synchronized admission policy + paired sweep (fp16+int8 each)
-- [ ] phase 3C: MLX or torch 2.6 + torchao for native Metal int8 matmul (close the remaining int8↔fp16 gap)
-- [ ] paged kv + prefix cache
+- [x] phase 3C: prefix cache (LCP-matching with on-the-fly cache slicing) + L5-prefix parity + sweep
+- [ ] phase 3D: MLX or torch 2.6 + torchao for native Metal int8 matmul (close the remaining int8↔fp16 gap)
+- [ ] true paged KV with custom Metal attention kernels (vLLM territory; deferred — not implementable in pure pytorch)
 - [ ] prometheus + grafana
 
 ## Quickstart
@@ -87,6 +88,8 @@ This is a deliberately modest first ablation: closed-loop at c=4, same-length pr
 - **EOS retirement** (2B) — one seq finishing mid-batch does not corrupt the remaining seqs' outputs
 - **L4-quant** (3A) — INT8 weight-only quantized engine matches fp16 reference on the first 4 greedy tokens (overlap, not exact — quant rounds)
 - **Synchronized admission policy** (3B) — scheduler unit tests cover both `fcfs` (admit into running slots) and `synchronized` (block admit until current batch drains)
+- **L5-prefix** (3C) — sequence served from a prefix-cache hit produces the same greedy tokens as the same prompt run cold (token-exact, via deepcopy + on-the-fly cache slicing)
+- **Prefix cache LCP semantics** — 12 unit tests cover bounded LRU eviction, longest-common-prefix scan across cached entries, MIN_LCP threshold to avoid micro-hits, hit-rate accounting
 
 ### Phase 2B — mixed-length batching + Poisson sweep
 
@@ -151,6 +154,43 @@ The forward_p50 / step_overhead split also confirmed something useful: even in t
 
 **Takeaway**: the negative finding from 3A wasn't proof that the technique was wrong — it was a measurement that revealed two stacked constraints, one of which was fixable in one commit. The 3A → 3B sequence is the actual portfolio story:
 > *"Implemented a continuous-batching scheduler. Initial benchmarks showed flat throughput. Added forward-pass instrumentation, discovered the admission policy was breaking batching under variable-length workloads, fixed it, and verified that the same INT8 weight-only quant path that previously showed a 3× regression now shows a 2× speedup (with synchronized admission), narrowing the gap to fp16 from -67% to -42%. The remaining gap is platform-level (no native int8 matmul on MPS) and isolated as the next experiment."*
+
+### Phase 3C — prefix cache with longest-common-prefix matching
+
+True paged KV (vLLM-style page tables + custom attention kernels) requires writing Metal kernels — that's multi-week scope and outside the pure-pytorch envelope this project commits to. The implementable, high-value subset is **prefix caching**: detect when a new prompt shares a long token-level prefix with a previously-served prompt, skip the prefill of the matched portion, only run the suffix. This is what production serving stacks actually use for chat workloads with system prompts and multi-turn history.
+
+**The implementation** ([`src/nanoserve/engine/prefix_cache.py`](src/nanoserve/engine/prefix_cache.py)):
+- Bounded LRU keyed by token-prefix hash
+- `lookup(prompt_ids)` does a longest-common-prefix scan across every cached entry, returns `(entry, lcp_length)` for the best match
+- `MIN_LCP_FOR_HIT=8` threshold suppresses micro-hits where the deepcopy + slice cost would exceed the prefill savings
+- Engine slices the cached `DynamicCache` to `lcp_length` tokens (per-layer keys/values are sliced along the seq dimension), then prefills only the suffix `prompt_ids[lcp:]`
+
+**Demo workload (long shared system prompt, c=4 closed-loop, max_new=16):**
+
+| | rps | p50 TTFT | hit rate |
+|---|---|---|---|
+| 200-tok shared prefix, cache off | 1.37 | 2.20 s | n/a |
+| **200-tok shared prefix, cache on** | **1.51** (+10%) | **1.96 s** (-11%) | 0.92 |
+
+A 200-token shared system prompt + 12 user-query tokens means cache-off prefill processes 212 tokens per request. Cache-on skips ~92% of the prefill work (200 of 212 tokens come from the cache), saving ~30 ms per request and lifting throughput from 1.37 to 1.51 rps. The hit rate is 92% — the misses are the first request that warms the cache, plus the rare prompt that picks a path that happens not to overlap with anything cached yet.
+
+**Smaller-prefix sweep (30-token shared, max_new=32):**
+
+| | rps | p50 TTFT | hit rate |
+|---|---|---|---|
+| serial cache off | 0.83 | 3.71 s | — |
+| serial cache on  | 0.81 | 3.60 s | 0.95 |
+| poisson+sync cache off | 0.86 | 5.76 s | — |
+| poisson+sync cache on  | 0.90 (+5%) | 5.47 s (-5%) | 0.95 |
+
+At a 30-token prefix the savings are marginal — saving 30 tokens of prefill is small relative to 32 decode tokens. The hit rate is still 95% (mechanism works) but the throughput delta sits inside noise on serial. The clear win is in the Poisson + synchronized + cache-on row at the bottom: +5% rps and -5% TTFT compared to no cache.
+
+**Two known limitations worth naming:**
+- **Cache hits force per-seq decode in continuous mode.** When any seq in a batch has a cache hit, the engine falls back from `_decode_batch` to `_decode_one` because the matched-prefix lengths don't all align. So in continuous mode, the prefix-cache win and the batching win don't compose cleanly. Future fix: cache-aware admission grouping (admit cache-hits separately from cache-misses so each group can batch).
+- **Pure-pytorch slicing of `DynamicCache` per-layer is fast but not zero-cost.** A real paged KV would store K/V in fixed-size blocks indexed by a page table, eliminating the slice + deepcopy. That requires Metal kernel work and is deferred to Phase 4.
+
+**The portfolio claim from 3C:**
+> *"Implemented a longest-common-prefix cache for KV reuse, including on-the-fly cache slicing for partial-match hits. Cache mechanism verified by token-exact greedy parity (L5-prefix gate). Demonstrates the throughput envelope: +10% rps and -11% TTFT on system-prompt-heavy workloads. Documents the boundary where prefix caching and continuous batching currently don't compose, with a clear next step (cache-aware admission grouping)."*
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
