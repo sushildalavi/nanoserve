@@ -1,15 +1,17 @@
 """NanoServeEngine — one engine, two modes (serial / continuous).
 
-phase 2a scope: single-sequence manual prefill + decode loop using
-model(input_ids, past_key_values=...) directly. no model.generate() calls.
-this is the foundation L1/L2/L3 parity gates will run against.
+architecture: one persistent background thread drives the scheduler. the
+event loop submits requests and consumes per-seq token queues. this lets
+multiple callers stream concurrently — which is what L2 parity validates.
 
-the forward-pass code here is deliberately naive. all optimization (batching,
-paged kv, masks) lands in subsequent commits with locked ablation rows.
+day 3 scope: the driver interleaves sequences in the scheduler but still
+runs decode on one seq at a time inside each step. day 4 replaces the
+per-step inner loop with a batched forward pass.
 """
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import AsyncIterator
 
@@ -20,15 +22,6 @@ from nanoserve.engine.service import EngineService, SubmitRequest, TokenEvent
 
 
 class NanoServeEngine(EngineService):
-    """single-sequence forward loop. one request at a time, no batching yet.
-
-    the batching_mode flag is carried so that downstream tests and ablation
-    rows already distinguish serial (default today) from continuous (coming
-    in day 4). a batching_mode of 'continuous' here currently still runs
-    one-at-a-time — it just goes through the scheduler's multi-slot path
-    so the plumbing is exercised.
-    """
-
     def __init__(
         self,
         model_spec: ModelSpec,
@@ -46,7 +39,10 @@ class NanoServeEngine(EngineService):
             )
         )
         self._streams: dict[int, asyncio.Queue] = {}
-        self._lock = asyncio.Lock()
+        self._sched_lock = threading.Lock()
+        self._wake = threading.Event()
+        self._stop = threading.Event()
+        self._driver: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
 
     async def start(self) -> None:
@@ -68,7 +64,19 @@ class NanoServeEngine(EngineService):
         self._model.eval()
         self._model.generation_config.max_length = None
 
+        self._start_driver()
+
+    def _start_driver(self) -> None:
+        self._stop.clear()
+        self._driver = threading.Thread(target=self._driver_loop, daemon=True)
+        self._driver.start()
+
     async def stop(self) -> None:
+        self._stop.set()
+        self._wake.set()
+        if self._driver is not None:
+            self._driver.join(timeout=5.0)
+            self._driver = None
         self._model = None
         self._tokenizer = None
         for q in list(self._streams.values()):
@@ -102,90 +110,93 @@ class NanoServeEngine(EngineService):
             submit_ts=time.time(),
         )
         self._streams[seq.id] = asyncio.Queue()
-        self._scheduler.submit(seq)
+        with self._sched_lock:
+            self._scheduler.submit(seq)
+        self._wake.set()
         return seq.id
 
     async def stream(self, seq_id: int) -> AsyncIterator[TokenEvent]:
         if seq_id not in self._streams:
             raise KeyError(f"unknown seq_id: {seq_id}")
         q = self._streams[seq_id]
-
-        # serial-lock the drain so concurrent callers don't interleave
-        # forward passes on the same model.
-        async with self._lock:
-            driver = asyncio.create_task(asyncio.to_thread(self._drain_loop, seq_id))
-            try:
-                while True:
-                    ev = await q.get()
-                    if ev is None:
-                        break
-                    yield ev
-                    if ev.done:
-                        break
-            finally:
-                await driver
-                self._streams.pop(seq_id, None)
+        try:
+            while True:
+                ev = await q.get()
+                if ev is None:
+                    break
+                yield ev
+                if ev.done:
+                    break
+        finally:
+            self._streams.pop(seq_id, None)
 
     def get_finished_seq(self, seq_id: int) -> Sequence | None:
-        """look up a finished sequence by id. used by callers (tests, runner)
-        that need to read output_ids or timing after stream() completes.
-        caller owns retiring it afterward via retire().
-        """
-        return next(
-            (s for s in self._scheduler.finished if s.id == seq_id), None
-        )
+        with self._sched_lock:
+            return next(
+                (s for s in self._scheduler.finished if s.id == seq_id), None
+            )
 
     def retire(self, seq_id: int) -> None:
-        seq = self.get_finished_seq(seq_id)
-        if seq is not None:
-            self._scheduler.retire(seq)
+        with self._sched_lock:
+            seq = next(
+                (s for s in self._scheduler.finished if s.id == seq_id), None
+            )
+            if seq is not None:
+                self._scheduler.retire(seq)
 
-    # ---- sync drain loop, runs on a worker thread ----
+    # ---- driver thread ----
 
-    def _drain_loop(self, seq_id: int) -> None:
+    def _driver_loop(self) -> None:
         import torch
 
-        sched = self._scheduler
-        tok = self._tokenizer
-        model = self._model
-        device = self._device
-
-        while sched.has_pending_work():
-            for seq in sched.admit_ready():
-                seq.admit_ts = time.time()
-                self._prefill(seq, model, tok, device, torch)
-                sched.mark_prefill_done(seq)
-
-            batch = sched.pick_decode_batch()
-            if not batch:
+        while not self._stop.is_set():
+            if not self._has_pending_work():
+                self._wake.wait(timeout=1.0)
+                self._wake.clear()
                 continue
 
+            # prefill any newly admitted sequences
+            with self._sched_lock:
+                admitted = self._scheduler.admit_ready()
+            for seq in admitted:
+                seq.admit_ts = time.time()
+                self._prefill(seq, torch)
+                with self._sched_lock:
+                    self._scheduler.mark_prefill_done(seq)
+
+            # step every currently-decoding sequence. day 3: one at a time.
+            with self._sched_lock:
+                batch = self._scheduler.pick_decode_batch()
+            if not batch:
+                continue
             for seq in batch:
-                self._decode_one(seq, model, device, torch)
+                self._decode_one(seq, torch)
                 stop = seq.should_stop()
                 if stop is not None:
                     seq.finish_ts = time.time()
-                    sched.mark_finished(seq, reason=stop)
+                    with self._sched_lock:
+                        self._scheduler.mark_finished(seq, reason=stop)
                     self._emit_done(seq, stop)
 
-            if any(s.id == seq_id for s in sched.finished):
-                return
+    def _has_pending_work(self) -> bool:
+        with self._sched_lock:
+            return self._scheduler.has_pending_work()
 
-    def _prefill(self, seq: Sequence, model, tokenizer, device, torch_mod) -> None:
-        input_ids = torch_mod.tensor([seq.prompt_ids], device=device)
+    def _prefill(self, seq: Sequence, torch_mod) -> None:
+        input_ids = torch_mod.tensor([seq.prompt_ids], device=self._device)
         with torch_mod.inference_mode():
-            out = model(input_ids=input_ids, use_cache=True)
+            out = self._model(input_ids=input_ids, use_cache=True)
         seq.past_kv = out.past_key_values
         next_tok = int(out.logits[0, -1].argmax().item())
         seq.append_token(next_tok)
         seq.first_token_ts = time.time()
         self._emit_token(seq, next_tok)
 
-    def _decode_one(self, seq: Sequence, model, device, torch_mod) -> None:
+    def _decode_one(self, seq: Sequence, torch_mod) -> None:
         last_tok = seq.output_ids[-1]
-        input_ids = torch_mod.tensor([[last_tok]], device=device)
+        input_ids = torch_mod.tensor([[last_tok]], device=self._device)
         with torch_mod.inference_mode():
-            out = model(
+            out = self._model(
                 input_ids=input_ids,
                 past_key_values=seq.past_kv,
                 use_cache=True,

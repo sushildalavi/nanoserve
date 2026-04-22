@@ -99,6 +99,7 @@ def test_l1_parity_per_prompt(model_and_tokenizer, prompt: str):
         engine._loop = asyncio.get_running_loop()
         engine._tokenizer = tok
         engine._model = model
+        engine._start_driver()
         out_ids = await _engine_output_ids(engine, prompt)
         await engine.stop()
         return out_ids
