@@ -44,11 +44,17 @@ class PrefixCacheEntry:
 class PrefixCache:
     """bounded LRU keyed by token-prefix hash.
 
-    semantics: lookup(prompt) returns the longest cached prefix that
-    matches the start of `prompt`, or None. for now we only check exact
-    full-prefix matches (no longest-common-prefix on partial overlap) — a
-    radix tree would do better but explodes in complexity.
+    semantics: lookup(prompt) does a longest-common-prefix scan across
+    every cached entry. returns (entry, lcp_length) for the entry that
+    shares the longest token-prefix with `prompt`, or None if no overlap
+    exceeds MIN_LCP_FOR_HIT. callers slice entry.cached_kv to lcp_length
+    before reusing it.
     """
+
+    # don't bother returning a hit if the overlap is shorter than this — the
+    # deepcopy + slice cost is only worth it for meaningfully long shared
+    # prefixes (system prompts, RAG context, etc).
+    MIN_LCP_FOR_HIT = 8
 
     def __init__(self, capacity: int = 32):
         if capacity < 1:
@@ -70,28 +76,34 @@ class PrefixCache:
         total = self.hits + self.misses
         return self.hits / total if total else 0.0
 
-    def lookup(self, prompt_ids: list[int]) -> PrefixCacheEntry | None:
-        """try every stored prefix; return the longest one that's a prefix
-        of prompt_ids. prompt_ids must strictly extend the prefix (we don't
-        return a hit when prompt_ids equals the cached prefix exactly,
-        because there'd be nothing left to prefill).
+    def lookup(self, prompt_ids: list[int]) -> tuple[PrefixCacheEntry, int] | None:
+        """find the cached entry that shares the longest token prefix with
+        prompt_ids. returns (entry, lcp_length) where lcp_length <=
+        min(len(entry.prefix_ids), len(prompt_ids) - 1). callers slice
+        entry.cached_kv to lcp_length before reusing it.
+
+        miss conditions: no overlap, or every overlap is less than
+        MIN_LCP_FOR_HIT tokens (small overlaps aren't worth the deepcopy).
         """
-        best: PrefixCacheEntry | None = None
-        best_len = 0
+        best_entry: PrefixCacheEntry | None = None
+        best_lcp = 0
         for entry in self._entries.values():
-            plen = len(entry.prefix_ids)
-            if plen <= best_len or plen >= len(prompt_ids):
-                continue
-            if prompt_ids[:plen] == entry.prefix_ids:
-                best = entry
-                best_len = plen
-        if best is not None:
-            self.hits += 1
-            # mark recently used
-            self._entries.move_to_end(_hash_ids(best.prefix_ids))
-        else:
+            # longest common prefix of entry.prefix_ids and prompt_ids,
+            # capped at len(prompt_ids) - 1 so there's at least 1 suffix
+            # token to actually run prefill on.
+            cap = min(len(entry.prefix_ids), len(prompt_ids) - 1)
+            lcp = 0
+            while lcp < cap and entry.prefix_ids[lcp] == prompt_ids[lcp]:
+                lcp += 1
+            if lcp > best_lcp:
+                best_lcp = lcp
+                best_entry = entry
+        if best_entry is None or best_lcp < self.MIN_LCP_FOR_HIT:
             self.misses += 1
-        return best
+            return None
+        self.hits += 1
+        self._entries.move_to_end(_hash_ids(best_entry.prefix_ids))
+        return best_entry, best_lcp
 
     def store(self, prefix_ids: list[int], cached_kv: Any, pad_len: int = 0) -> None:
         if not prefix_ids:

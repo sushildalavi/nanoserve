@@ -225,11 +225,24 @@ class NanoServeEngine(EngineService):
             # prefill — we can't easily mix cached prefixes into a batched
             # forward (different starting cache states). this is fine: the
             # cached portion is skipped entirely so per-seq prefill is fast.
+            # we also probe the cache here without consuming the hit (lookup
+            # increments hits/misses) — we leave the actual lookup to _prefill.
             any_prefix_hit = False
             if self.prefix_cache is not None:
                 for s in admitted:
-                    if self.prefix_cache.lookup(s.prompt_ids) is not None:
-                        any_prefix_hit = True
+                    # peek without affecting hit/miss accounting: scan
+                    # entries inline rather than calling lookup.
+                    for entry in self.prefix_cache._entries.values():
+                        cap = min(len(entry.prefix_ids), len(s.prompt_ids) - 1)
+                        if cap < self.prefix_cache.MIN_LCP_FOR_HIT:
+                            continue
+                        match = 0
+                        while match < cap and entry.prefix_ids[match] == s.prompt_ids[match]:
+                            match += 1
+                        if match >= self.prefix_cache.MIN_LCP_FOR_HIT:
+                            any_prefix_hit = True
+                            break
+                    if any_prefix_hit:
                         break
 
             if (
@@ -288,6 +301,8 @@ class NanoServeEngine(EngineService):
     def _prefill(self, seq: Sequence, torch_mod) -> None:
         from copy import deepcopy
 
+        from transformers import DynamicCache
+
         prefix_hit = (
             self.prefix_cache.lookup(seq.prompt_ids)
             if self.prefix_cache is not None
@@ -295,9 +310,14 @@ class NanoServeEngine(EngineService):
         )
 
         if prefix_hit is not None:
-            # skip the cached prefix; only prefill the suffix tokens.
-            past = deepcopy(prefix_hit.cached_kv)
-            suffix_ids = seq.prompt_ids[len(prefix_hit.prefix_ids):]
+            entry, lcp = prefix_hit
+            # slice the cached past_kv to lcp tokens (entry may have been
+            # stored at a longer length; we only want the matching prefix).
+            if lcp == len(entry.prefix_ids):
+                past = deepcopy(entry.cached_kv)
+            else:
+                past = self._slice_cache(entry.cached_kv, lcp, DynamicCache)
+            suffix_ids = seq.prompt_ids[lcp:]
             assert suffix_ids, "lookup() must return only when suffix is non-empty"
             input_ids = torch_mod.tensor([suffix_ids], device=self._device)
             with torch_mod.inference_mode():
@@ -307,7 +327,7 @@ class NanoServeEngine(EngineService):
                     use_cache=True,
                 )
             seq.past_kv = out.past_key_values
-            seq.pad_len = prefix_hit.pad_len
+            seq.pad_len = entry.pad_len
         else:
             input_ids = torch_mod.tensor([seq.prompt_ids], device=self._device)
             with torch_mod.inference_mode():
@@ -322,6 +342,22 @@ class NanoServeEngine(EngineService):
         seq.append_token(next_tok)
         seq.first_token_ts = time.time()
         self._emit_token(seq, next_tok)
+
+    @staticmethod
+    def _slice_cache(cache, k: int, DynamicCacheCls):
+        """return a new DynamicCache containing only the first k tokens of
+        each layer's keys/values. used by the prefix cache to truncate a
+        longer cached prefix to a shorter LCP match before reuse.
+        """
+        out = DynamicCacheCls()
+        num_layers = len(cache)
+        for layer in range(num_layers):
+            out.update(
+                cache.layers[layer].keys[:, :, :k, :].contiguous(),
+                cache.layers[layer].values[:, :, :k, :].contiguous(),
+                layer,
+            )
+        return out
 
     def _prefill_batch(self, seqs: list[Sequence], torch_mod) -> None:
         """batched prefill with left-padding. each seq ends up with a cache
