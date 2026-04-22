@@ -3,3 +3,5 @@ ts,commit,backend,model,quant,batching,paging,prefix_cache,workload,rate,concurr
 20260422T063250Z,,llama_cpp,tinyllama-1.1b-chat,Q8_0,off,off,off,poisson,2.0,4,100,1.431,5049.84,9901.44,10573.59,21.05,29.47,7533.18,12746.29,13416.23,47.5,47.0,,,,,
 20260422T063417Z,,llama_cpp,tinyllama-1.1b-chat,Q4_K_M,off,off,off,poisson,2.0,4,100,1.164,12263.37,22916.54,23690.87,25.3,34.64,15530.99,26276.78,27093.89,39.13,47.0,,,,,
 20260422T065351Z,cea6401,hf_mps,tinyllama-1.1b-chat,fp16,off,off,off,closed-loop,2.0,1,20,0.183,135.33,253.12,314.01,48.51,49.32,6296.3,6410.73,6459.39,21.82,87.1,,,,,
+20260422T203331Z,2ed4c8b,nanoserve,tinyllama-1.1b-chat,fp16,off,off,off,closed-loop,2.0,1,10,0.371,102.24,274.13,364.41,30.73,45.56,2449.61,3525.69,3587.49,30.69,484.1,1.0,1,,,
+20260422T203440Z,2ed4c8b,nanoserve,tinyllama-1.1b-chat,fp16,on,off,off,closed-loop,2.0,4,20,0.457,259.4,718.89,786.58,111.89,131.79,8608.39,10056.91,10057.16,9.19,1500.2,3.75,4,,,

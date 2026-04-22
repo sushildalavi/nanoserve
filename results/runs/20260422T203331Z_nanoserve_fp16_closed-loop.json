@@ -1,0 +1,159 @@
+{
+  "ts": "20260422T203331Z",
+  "commit": "2ed4c8b",
+  "env": {
+    "python": "3.11.15",
+    "platform": "macOS-26.4.1-arm64-arm-64bit",
+    "machine": "arm64"
+  },
+  "config": {
+    "model": {
+      "name": "tinyllama-1.1b-chat",
+      "backend": "nanoserve",
+      "path": "TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+      "quant": "fp16",
+      "batching_mode": "serial",
+      "max_batch_size": 1
+    },
+    "workload": {
+      "kind": "closed-loop",
+      "num_requests": 10,
+      "concurrency": 1,
+      "rate": 2.0,
+      "max_new_tokens": 64,
+      "seed": 0,
+      "prompt_file": "bench_prompts.jsonl"
+    }
+  },
+  "aggregate": {
+    "n": 10,
+    "n_ok": 10,
+    "duration_s": 26.94297432899475,
+    "rps": 0.371154271161461,
+    "input_tokens_total": 131,
+    "output_tokens_total": 790,
+    "decode_tok_s": 30.68876230278014,
+    "ttft_p50": 102.2418737411499,
+    "ttft_p95": 274.1262078285215,
+    "ttft_p99": 364.4134831428528,
+    "tpot_p50": 30.725882608272894,
+    "tpot_p95": 45.560883763907604,
+    "e2e_p50": 2449.6068954467773,
+    "e2e_p95": 3525.6876707077026,
+    "e2e_p99": 3587.4855947494507,
+    "queue_p95": 0.0
+  },
+  "mem_peak_mb": 484.09375,
+  "records": [
+    {
+      "idx": 0,
+      "arrival_ts": 1776889984.152263,
+      "start_ts": 1776889984.152263,
+      "first_token_ts": 1776889984.5392482,
+      "end_ts": 1776889987.755198,
+      "input_tokens": 14,
+      "output_tokens": 76,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 1,
+      "arrival_ts": 1776889987.755832,
+      "start_ts": 1776889987.755832,
+      "first_token_ts": 1776889987.8650749,
+      "end_ts": 1776889990.211027,
+      "input_tokens": 12,
+      "output_tokens": 85,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 2,
+      "arrival_ts": 1776889990.211308,
+      "start_ts": 1776889990.211308,
+      "first_token_ts": 1776889990.305939,
+      "end_ts": 1776889992.6089752,
+      "input_tokens": 11,
+      "output_tokens": 86,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 3,
+      "arrival_ts": 1776889992.609195,
+      "start_ts": 1776889992.609195,
+      "first_token_ts": 1776889992.716223,
+      "end_ts": 1776889995.07057,
+      "input_tokens": 12,
+      "output_tokens": 78,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 4,
+      "arrival_ts": 1776889995.070784,
+      "start_ts": 1776889995.070784,
+      "first_token_ts": 1776889995.1218402,
+      "end_ts": 1776889997.411672,
+      "input_tokens": 12,
+      "output_tokens": 71,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 5,
+      "arrival_ts": 1776889997.4119282,
+      "start_ts": 1776889997.4119282,
+      "first_token_ts": 1776889997.509384,
+      "end_ts": 1776889999.855947,
+      "input_tokens": 16,
+      "output_tokens": 77,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 6,
+      "arrival_ts": 1776889999.8561559,
+      "start_ts": 1776889999.8561559,
+      "first_token_ts": 1776889999.906699,
+      "end_ts": 1776890002.17221,
+      "input_tokens": 12,
+      "output_tokens": 76,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 7,
+      "arrival_ts": 1776890002.172405,
+      "start_ts": 1776890002.172405,
+      "first_token_ts": 1776890002.224869,
+      "end_ts": 1776890004.578656,
+      "input_tokens": 14,
+      "output_tokens": 86,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 8,
+      "arrival_ts": 1776890004.578923,
+      "start_ts": 1776890004.578923,
+      "first_token_ts": 1776890004.69066,
+      "end_ts": 1776890007.6629171,
+      "input_tokens": 15,
+      "output_tokens": 85,
+      "ok": true,
+      "error": null
+    },
+    {
+      "idx": 9,
+      "arrival_ts": 1776890007.6631758,
+      "start_ts": 1776890007.6631758,
+      "first_token_ts": 1776890007.7993631,
+      "end_ts": 1776890011.09445,
+      "input_tokens": 13,
+      "output_tokens": 70,
+      "ok": true,
+      "error": null
+    }
+  ]
+}
