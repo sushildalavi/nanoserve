@@ -53,6 +53,19 @@ Q4_K_M is slower than Q8_0 here because the model is too small (1.1B) to be memo
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
+### How to read a row
+
+- **workload `closed-loop c=N`** — N concurrent clients, each fires the next request as soon as the current one finishes. Measures raw serving capacity with no queuing effects.
+- **workload `poisson λ=R`** — open-loop Poisson arrivals at R req/s. Measures tail behavior under realistic bursty load. If `R > rps`, the queue is unbounded and tail latency blows up — that's signal, not noise.
+- **rps** — sustained throughput (successful requests per second over the full run).
+- **TTFT** — time to first token (prefill + queue wait).
+- **TPOT** — time per output token *after* the first (decode steady-state).
+- **e2e** — total wall time from request submission to last token.
+- **decode tok/s** — aggregate output tokens divided by summed decode time. Measures raw model speed independent of queue pressure.
+- **p50 / p95 / p99** — median, 95th, 99th percentile across all requests in the run.
+
+A new row is added every time a technique is toggled on or off. The columns `batching`, `paging`, and `prefix_cache` track which features were enabled, so any speedup can be isolated to the specific thing that changed.
+
 ## Layout
 
 ```
