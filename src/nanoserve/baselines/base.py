@@ -37,3 +37,9 @@ class Backend(ABC):
         subclasses that spawn a subprocess should override.
         """
         return psutil.Process().memory_info().rss / (1024 * 1024)
+
+    def get_stats(self) -> dict:
+        """backend-specific counters (avg batch size, etc). default empty.
+        the runner merges this into the ablation row.
+        """
+        return {}

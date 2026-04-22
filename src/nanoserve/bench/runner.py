@@ -159,6 +159,7 @@ def run_baseline(model: ModelSpec, workload: WorkloadSpec) -> dict:
         "decode_tok_s": round(agg.decode_tok_s, 2),
         "mem_peak_mb": round(mem_peak, 1),
     }
+    row.update(backend.get_stats())
     append_ablation_row(row)
 
     console.print(row)

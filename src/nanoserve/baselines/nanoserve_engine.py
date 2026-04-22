@@ -25,6 +25,7 @@ class NanoServeBackend(Backend):
         self.batching_mode = batching_mode
         self.max_batch_size = max_batch_size
         self._engine: NanoServeEngine | None = None
+        self._final_stats: dict = {}
 
     async def start(self) -> None:
         self._engine = NanoServeEngine(
@@ -36,8 +37,17 @@ class NanoServeBackend(Backend):
 
     async def stop(self) -> None:
         if self._engine is not None:
+            # capture scheduler stats before the engine is torn down
+            self._final_stats = self._snapshot_stats()
             await self._engine.stop()
             self._engine = None
+
+    def _snapshot_stats(self) -> dict:
+        stats = self._engine._scheduler.stats
+        return {
+            "avg_batch_size": round(stats.avg_batch_size, 3),
+            "max_batch_size": stats.max_active,
+        }
 
     def count_tokens(self, text: str) -> int:
         if self._engine is None:
@@ -58,3 +68,8 @@ class NanoServeBackend(Backend):
             if ev.token_text:
                 yield ev.token_text
         self._engine.retire(seq_id)
+
+    def get_stats(self) -> dict:
+        if self._engine is not None:
+            return self._snapshot_stats()
+        return self._final_stats
