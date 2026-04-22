@@ -191,6 +191,14 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# nanoserve
+models/
+results/runs/
+*.gguf
+*.bin
+.DS_Store
+vendor/llama.cpp/
+
 # PyPI configuration file
 .pypirc
 
