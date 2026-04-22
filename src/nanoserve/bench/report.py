@@ -4,7 +4,7 @@ import platform
 import subprocess
 import sys
 from dataclasses import asdict
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 from nanoserve.bench.metrics import AggregateMetrics, RequestRecord
@@ -48,7 +48,7 @@ def git_commit() -> str:
 
 
 def now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    return datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
 
 
 def env_snapshot() -> dict:

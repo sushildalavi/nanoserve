@@ -4,7 +4,7 @@ from nanoserve.bench.workload import build_workload, poisson_arrivals
 def test_poisson_offsets_are_monotonic():
     xs = poisson_arrivals(n=50, rate=5.0, seed=7)
     assert len(xs) == 50
-    for a, b in zip(xs, xs[1:]):
+    for a, b in zip(xs, xs[1:], strict=False):
         assert b >= a
 
 
