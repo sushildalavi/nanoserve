@@ -18,7 +18,6 @@ from nanoserve.config import TINYLLAMA_HF
 from nanoserve.engine.engine import NanoServeEngine
 from nanoserve.engine.service import SubmitRequest
 
-
 PROMPTS = [
     "What is 2 + 2?",
     "List three primary colors.",
