@@ -46,6 +46,8 @@ class NanoServeBackend(Backend):
             self._engine = None
 
     def _snapshot_stats(self) -> dict:
+        from nanoserve.bench.metrics import percentile
+
         stats = self._engine._scheduler.stats
         total_forwards = (
             self._engine.batched_forward_steps + self._engine.single_forward_steps
@@ -55,10 +57,16 @@ class NanoServeBackend(Backend):
             if total_forwards
             else 0.0
         )
+        fwd = self._engine.forward_ms
+        ovh = self._engine.step_overhead_ms
         return {
             "avg_batch_size": round(stats.avg_batch_size, 3),
             "max_batch_size": stats.max_active,
             "batched_forward_frac": round(batched_frac, 3),
+            "forward_p50_ms": round(percentile(fwd, 50), 2) if fwd else 0.0,
+            "forward_p95_ms": round(percentile(fwd, 95), 2) if fwd else 0.0,
+            "step_overhead_p50_ms": round(percentile(ovh, 50), 2) if ovh else 0.0,
+            "step_overhead_p95_ms": round(percentile(ovh, 95), 2) if ovh else 0.0,
         }
 
     def count_tokens(self, text: str) -> int:

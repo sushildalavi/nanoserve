@@ -58,6 +58,13 @@ class NanoServeEngine(EngineService):
         # continuous-mode results under poisson load.
         self.batched_forward_steps: int = 0
         self.single_forward_steps: int = 0
+        # per-step wall-clock timings. forward_ms = time spent inside
+        # model.forward() (the matmul-heavy part). step_overhead_ms = time
+        # in the same driver iteration outside model.forward (token
+        # decoding, queue puts, scheduler bookkeeping). together they let
+        # us tell whether the engine is gpu-bound or cpu-bound.
+        self.forward_ms: list[float] = []
+        self.step_overhead_ms: list[float] = []
 
     async def start(self) -> None:
         import torch
@@ -221,6 +228,9 @@ class NanoServeEngine(EngineService):
             if not batch:
                 continue
 
+            step_t0 = time.time()
+            forward_count_before = len(self.forward_ms)
+
             if self._can_batch_forward(batch):
                 self._decode_batch(batch, torch)
                 self.batched_forward_steps += 1
@@ -236,6 +246,13 @@ class NanoServeEngine(EngineService):
                     with self._sched_lock:
                         self._scheduler.mark_finished(seq, reason=stop)
                     self._emit_done(seq, stop)
+
+            step_total_ms = (time.time() - step_t0) * 1000.0
+            forward_total_ms = sum(
+                self.forward_ms[forward_count_before:]
+            )
+            overhead_ms = max(0.0, step_total_ms - forward_total_ms)
+            self.step_overhead_ms.append(overhead_ms)
 
     def _has_pending_work(self) -> bool:
         with self._sched_lock:
@@ -336,6 +353,7 @@ class NanoServeEngine(EngineService):
             attn_mask.append(row)
         attention_mask = torch_mod.tensor(attn_mask, device=self._device)
 
+        fwd_t0 = time.time()
         with torch_mod.inference_mode():
             out = self._model(
                 input_ids=input_ids,
@@ -343,6 +361,8 @@ class NanoServeEngine(EngineService):
                 past_key_values=batched,
                 use_cache=True,
             )
+            torch_mod.mps.synchronize()
+        self.forward_ms.append((time.time() - fwd_t0) * 1000.0)
 
         new_caches = self._split_cache(out.past_key_values, len(batch), DynamicCache)
 
@@ -396,8 +416,11 @@ class NanoServeEngine(EngineService):
             cache_len = int(seq.past_kv.get_seq_length())
             mask = [0] * seq.pad_len + [1] * (cache_len + 1 - seq.pad_len)
             kwargs["attention_mask"] = torch_mod.tensor([mask], device=self._device)
+        fwd_t0 = time.time()
         with torch_mod.inference_mode():
             out = self._model(input_ids=input_ids, **kwargs)
+            torch_mod.mps.synchronize()
+        self.forward_ms.append((time.time() - fwd_t0) * 1000.0)
         seq.past_kv = out.past_key_values
         next_tok = int(out.logits[0, -1].argmax().item())
         seq.append_token(next_tok)

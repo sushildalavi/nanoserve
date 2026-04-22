@@ -39,6 +39,9 @@ ABLATION_HEADERS = [
     "admit_wait_p95_ms",
     "step_overhead_p50_ms",
     "step_overhead_p95_ms",
+    "batched_forward_frac",
+    "forward_p50_ms",
+    "forward_p95_ms",
 ]
 
 
