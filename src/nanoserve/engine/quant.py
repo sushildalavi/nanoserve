@@ -41,7 +41,7 @@ class Int8LinearWeightOnly(nn.Module):
             self.bias = None
 
     @classmethod
-    def from_linear(cls, linear: nn.Linear) -> "Int8LinearWeightOnly":
+    def from_linear(cls, linear: nn.Linear) -> Int8LinearWeightOnly:
         W = linear.weight.data  # [out, in]
         # per-row symmetric scale. clamp to avoid divide-by-zero on dead rows.
         row_absmax = W.abs().amax(dim=-1, keepdim=True)  # [out, 1]
