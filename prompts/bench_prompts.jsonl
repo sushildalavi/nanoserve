@@ -1,0 +1,50 @@
+{"prompt": "Explain what a transformer model is in three sentences."}
+{"prompt": "Write a short python function that returns the fibonacci sequence up to n."}
+{"prompt": "Summarize the plot of Hamlet in a paragraph."}
+{"prompt": "List five healthy breakfast ideas with brief descriptions."}
+{"prompt": "What are the main differences between TCP and UDP?"}
+{"prompt": "Draft a polite email asking a coworker to review a pull request."}
+{"prompt": "Describe how a CPU pipeline works, keep it approachable."}
+{"prompt": "Give me three metaphors for how attention works in neural networks."}
+{"prompt": "Write a haiku about autumn leaves."}
+{"prompt": "What is the difference between a process and a thread?"}
+{"prompt": "Explain eventual consistency in databases with an example."}
+{"prompt": "Write a short bedtime story about a lost robot."}
+{"prompt": "List the top five causes of slow SQL queries."}
+{"prompt": "Give a one paragraph overview of the 1969 moon landing."}
+{"prompt": "What is a monad in functional programming, explained simply?"}
+{"prompt": "Write a SQL query to get the top 3 salaries from an employees table."}
+{"prompt": "Describe the taste of a perfectly ripe mango."}
+{"prompt": "What are common causes of memory leaks in long running services?"}
+{"prompt": "Explain the CAP theorem in plain english."}
+{"prompt": "Write a short persuasive paragraph on why walking every day is good."}
+{"prompt": "What are the pros and cons of microservices versus a monolith?"}
+{"prompt": "Describe a sunset over the ocean in three sentences."}
+{"prompt": "List five things to do during a weekend in Tokyo."}
+{"prompt": "Write a python one-liner that reverses a string."}
+{"prompt": "Explain how DNS works when you type a url into a browser."}
+{"prompt": "Summarize the book Atomic Habits in four bullet points."}
+{"prompt": "Describe the cultural significance of chai in India."}
+{"prompt": "What is backpropagation, explained at a high level?"}
+{"prompt": "Give me three ideas for a 30 minute dinner."}
+{"prompt": "Write a limerick about a programmer who loves coffee."}
+{"prompt": "Explain the difference between supervised and unsupervised learning."}
+{"prompt": "Describe what happens when you open a tab in chrome."}
+{"prompt": "Write a short review of a hypothetical cozy cafe you visited."}
+{"prompt": "What are the main trade offs of row versus column oriented databases?"}
+{"prompt": "Give me three ways to practice for a system design interview."}
+{"prompt": "Explain GPU memory hierarchy briefly."}
+{"prompt": "Write a short motivational paragraph for someone starting a new job."}
+{"prompt": "What is the difference between shallow and deep copy in python?"}
+{"prompt": "Describe a rainy afternoon in a small mountain town."}
+{"prompt": "Explain what a hash table is to a high school student."}
+{"prompt": "Write a recipe outline for homemade pizza dough."}
+{"prompt": "Summarize the difference between HTTP 1.1 and HTTP 2."}
+{"prompt": "Give five tips for writing clearer commit messages."}
+{"prompt": "Describe what makes a good README for an open source project."}
+{"prompt": "Write a short story opening set on a space station."}
+{"prompt": "Explain what an operating system kernel does."}
+{"prompt": "Compare pandas and polars for data analysis."}
+{"prompt": "List common symptoms and causes of burnout."}
+{"prompt": "Give me a quick explanation of kv caching in transformers."}
+{"prompt": "Write a one paragraph origin story for a fantasy sword."}
