@@ -59,6 +59,7 @@ def baseline_llamacpp(
 def baseline_nanoserve(
     batching_mode: str = "serial",
     max_batch_size: int = 1,
+    quant_mode: str = "none",
     workload: str = "closed-loop",
     num_requests: int = 20,
     concurrency: int = 1,
@@ -66,13 +67,17 @@ def baseline_nanoserve(
     max_new_tokens: int = 128,
 ):
     """run the nanoserve engine as a backend. flag-flipped ablation: pass
-    batching_mode=serial vs continuous to fill the phase-2 ablation rows.
+    batching_mode=serial vs continuous, quant_mode=none vs int8, etc.
     """
     from nanoserve.bench.runner import run_baseline
     from nanoserve.config import WorkloadSpec, tinyllama_nanoserve
 
     run_baseline(
-        tinyllama_nanoserve(batching_mode=batching_mode, max_batch_size=max_batch_size),
+        tinyllama_nanoserve(
+            batching_mode=batching_mode,
+            max_batch_size=max_batch_size,
+            quant_mode=quant_mode,
+        ),
         WorkloadSpec(
             kind=workload,
             num_requests=num_requests,

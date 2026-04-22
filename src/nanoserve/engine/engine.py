@@ -30,9 +30,13 @@ class NanoServeEngine(EngineService):
         model_spec: ModelSpec,
         max_batch_size: int = 1,
         batching_mode: str = "serial",
+        quant_mode: str = "none",
     ):
         self.model_spec = model_spec
         self._device = "mps"
+        self.quant_mode = quant_mode
+        self.weight_bytes_saved: int = 0
+        self.num_layers_quantized: int = 0
         self._tokenizer = None
         self._model = None
         self._scheduler = Scheduler(
@@ -73,6 +77,19 @@ class NanoServeEngine(EngineService):
         ).to(self._device)
         self._model.eval()
         self._model.generation_config.max_length = None
+
+        if self.quant_mode == "int8":
+            from nanoserve.engine.quant import quantize_model_int8_weight_only
+            n, saved = quantize_model_int8_weight_only(self._model)
+            self.num_layers_quantized = n
+            self.weight_bytes_saved = saved
+            # reclaim fp16 weight memory held in cached tensors
+            import gc
+            gc.collect()
+            if torch.backends.mps.is_available():
+                torch.mps.empty_cache()
+        elif self.quant_mode != "none":
+            raise ValueError(f"unknown quant_mode: {self.quant_mode}")
 
         self._start_driver()
 

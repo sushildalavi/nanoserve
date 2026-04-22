@@ -16,6 +16,7 @@ class ModelSpec:
     # nanoserve-engine only
     batching_mode: str = "serial"
     max_batch_size: int = 1
+    quant_mode: str = "none"  # "none" | "int8" — nanoserve engine internal quant
 
 
 @dataclass
@@ -58,12 +59,17 @@ TINYLLAMA_GGUF_Q4 = ModelSpec(
 )
 
 
-def tinyllama_nanoserve(batching_mode: str, max_batch_size: int) -> ModelSpec:
+def tinyllama_nanoserve(
+    batching_mode: str,
+    max_batch_size: int,
+    quant_mode: str = "none",
+) -> ModelSpec:
     return ModelSpec(
         name="tinyllama-1.1b-chat",
         backend="nanoserve",
         path="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
-        quant="fp16",
+        quant="fp16" if quant_mode == "none" else quant_mode,
         batching_mode=batching_mode,
         max_batch_size=max_batch_size,
+        quant_mode=quant_mode,
     )

@@ -25,6 +25,7 @@ def _make_backend(model: ModelSpec):
             model,
             batching_mode=model.batching_mode,
             max_batch_size=model.max_batch_size,
+            quant_mode=model.quant_mode,
         )
     raise ValueError(f"unknown backend: {model.backend}")
 

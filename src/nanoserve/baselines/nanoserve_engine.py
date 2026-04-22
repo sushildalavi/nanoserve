@@ -20,10 +20,12 @@ class NanoServeBackend(Backend):
         model: ModelSpec,
         batching_mode: str = "serial",
         max_batch_size: int = 1,
+        quant_mode: str = "none",
     ):
         self.model_spec = model
         self.batching_mode = batching_mode
         self.max_batch_size = max_batch_size
+        self.quant_mode = quant_mode
         self._engine: NanoServeEngine | None = None
         self._final_stats: dict = {}
 
@@ -32,6 +34,7 @@ class NanoServeBackend(Backend):
             self.model_spec,
             max_batch_size=self.max_batch_size,
             batching_mode=self.batching_mode,
+            quant_mode=self.quant_mode,
         )
         await self._engine.start()
 
