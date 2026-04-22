@@ -22,12 +22,14 @@ class NanoServeBackend(Backend):
         max_batch_size: int = 1,
         quant_mode: str = "none",
         admission_policy: str = "fcfs",
+        prefix_cache_capacity: int = 0,
     ):
         self.model_spec = model
         self.batching_mode = batching_mode
         self.max_batch_size = max_batch_size
         self.quant_mode = quant_mode
         self.admission_policy = admission_policy
+        self.prefix_cache_capacity = prefix_cache_capacity
         self._engine: NanoServeEngine | None = None
         self._final_stats: dict = {}
 
@@ -38,6 +40,7 @@ class NanoServeBackend(Backend):
             batching_mode=self.batching_mode,
             quant_mode=self.quant_mode,
             admission_policy=self.admission_policy,
+            prefix_cache_capacity=self.prefix_cache_capacity,
         )
         await self._engine.start()
 
@@ -62,7 +65,7 @@ class NanoServeBackend(Backend):
         )
         fwd = self._engine.forward_ms
         ovh = self._engine.step_overhead_ms
-        return {
+        out = {
             "avg_batch_size": round(stats.avg_batch_size, 3),
             "max_batch_size": stats.max_active,
             "batched_forward_frac": round(batched_frac, 3),
@@ -71,6 +74,11 @@ class NanoServeBackend(Backend):
             "step_overhead_p50_ms": round(percentile(ovh, 50), 2) if ovh else 0.0,
             "step_overhead_p95_ms": round(percentile(ovh, 95), 2) if ovh else 0.0,
         }
+        if self._engine.prefix_cache is not None:
+            pc = self._engine.prefix_cache
+            out["prefix_cache_hit_rate"] = round(pc.hit_rate, 3)
+            out["prefix_cache_size"] = len(pc)
+        return out
 
     def count_tokens(self, text: str) -> int:
         if self._engine is None:

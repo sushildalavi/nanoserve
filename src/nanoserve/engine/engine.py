@@ -32,12 +32,19 @@ class NanoServeEngine(EngineService):
         batching_mode: str = "serial",
         quant_mode: str = "none",
         admission_policy: str = "fcfs",
+        prefix_cache_capacity: int = 0,
     ):
         self.model_spec = model_spec
         self._device = "mps"
         self.quant_mode = quant_mode
         self.weight_bytes_saved: int = 0
         self.num_layers_quantized: int = 0
+        # prefix cache. capacity=0 disables (the default — phase 3c flag-flip).
+        if prefix_cache_capacity > 0:
+            from nanoserve.engine.prefix_cache import PrefixCache
+            self.prefix_cache = PrefixCache(capacity=prefix_cache_capacity)
+        else:
+            self.prefix_cache = None
         self._tokenizer = None
         self._model = None
         self._scheduler = Scheduler(
@@ -211,7 +218,22 @@ class NanoServeEngine(EngineService):
             with self._sched_lock:
                 admitted = self._scheduler.admit_ready()
 
-            if len(admitted) > 1 and self._scheduler.cfg.batching_mode == "continuous":
+            # if any admitted seq has a prefix-cache hit, fall back to per-seq
+            # prefill — we can't easily mix cached prefixes into a batched
+            # forward (different starting cache states). this is fine: the
+            # cached portion is skipped entirely so per-seq prefill is fast.
+            any_prefix_hit = False
+            if self.prefix_cache is not None:
+                for s in admitted:
+                    if self.prefix_cache.lookup(s.prompt_ids) is not None:
+                        any_prefix_hit = True
+                        break
+
+            if (
+                len(admitted) > 1
+                and self._scheduler.cfg.batching_mode == "continuous"
+                and not any_prefix_hit
+            ):
                 self._prefill_batch(admitted, torch)
                 for seq in admitted:
                     seq.admit_ts = time.time()
@@ -261,11 +283,38 @@ class NanoServeEngine(EngineService):
             return self._scheduler.has_pending_work()
 
     def _prefill(self, seq: Sequence, torch_mod) -> None:
-        input_ids = torch_mod.tensor([seq.prompt_ids], device=self._device)
-        with torch_mod.inference_mode():
-            out = self._model(input_ids=input_ids, use_cache=True)
-        seq.past_kv = out.past_key_values
-        seq.pad_len = 0
+        from copy import deepcopy
+
+        prefix_hit = (
+            self.prefix_cache.lookup(seq.prompt_ids)
+            if self.prefix_cache is not None
+            else None
+        )
+
+        if prefix_hit is not None:
+            # skip the cached prefix; only prefill the suffix tokens.
+            past = deepcopy(prefix_hit.cached_kv)
+            suffix_ids = seq.prompt_ids[len(prefix_hit.prefix_ids):]
+            assert suffix_ids, "lookup() must return only when suffix is non-empty"
+            input_ids = torch_mod.tensor([suffix_ids], device=self._device)
+            with torch_mod.inference_mode():
+                out = self._model(
+                    input_ids=input_ids,
+                    past_key_values=past,
+                    use_cache=True,
+                )
+            seq.past_kv = out.past_key_values
+            seq.pad_len = prefix_hit.pad_len
+        else:
+            input_ids = torch_mod.tensor([seq.prompt_ids], device=self._device)
+            with torch_mod.inference_mode():
+                out = self._model(input_ids=input_ids, use_cache=True)
+            seq.past_kv = out.past_key_values
+            seq.pad_len = 0
+            # store the freshly-prefilled cache for future hits.
+            if self.prefix_cache is not None:
+                self.prefix_cache.store(seq.prompt_ids, seq.past_kv, pad_len=0)
+
         next_tok = int(out.logits[0, -1].argmax().item())
         seq.append_token(next_tok)
         seq.first_token_ts = time.time()

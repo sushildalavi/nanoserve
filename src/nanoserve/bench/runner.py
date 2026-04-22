@@ -27,6 +27,7 @@ def _make_backend(model: ModelSpec):
             max_batch_size=model.max_batch_size,
             quant_mode=model.quant_mode,
             admission_policy=model.admission_policy,
+            prefix_cache_capacity=model.prefix_cache_capacity,
         )
     raise ValueError(f"unknown backend: {model.backend}")
 
@@ -91,6 +92,7 @@ async def _run_async(
         rate=workload.rate,
         max_new_tokens=workload.max_new_tokens,
         seed=workload.seed,
+        shared_prefix_tokens=workload.shared_prefix_tokens,
     )
 
     await backend.start()

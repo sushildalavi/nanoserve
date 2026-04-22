@@ -18,6 +18,7 @@ class ModelSpec:
     max_batch_size: int = 1
     quant_mode: str = "none"  # "none" | "int8" — nanoserve engine internal quant
     admission_policy: str = "fcfs"  # "fcfs" | "synchronized"
+    prefix_cache_capacity: int = 0  # 0 = disabled, >0 = LRU capacity
 
 
 @dataclass
@@ -29,6 +30,11 @@ class WorkloadSpec:
     max_new_tokens: int = 128
     seed: int = 0
     prompt_file: str = "bench_prompts.jsonl"
+    # if > 0, prepend a shared system-prompt-like prefix of this many words
+    # to every prompt. used to simulate workloads that benefit from prefix
+    # caching (system prompts, multi-turn chat). 0 = bench against the raw
+    # prompt set, no shared prefix.
+    shared_prefix_tokens: int = 0
 
 
 @dataclass
@@ -65,6 +71,7 @@ def tinyllama_nanoserve(
     max_batch_size: int,
     quant_mode: str = "none",
     admission_policy: str = "fcfs",
+    prefix_cache_capacity: int = 0,
 ) -> ModelSpec:
     return ModelSpec(
         name="tinyllama-1.1b-chat",
@@ -75,4 +82,5 @@ def tinyllama_nanoserve(
         max_batch_size=max_batch_size,
         quant_mode=quant_mode,
         admission_policy=admission_policy,
+        prefix_cache_capacity=prefix_cache_capacity,
     )

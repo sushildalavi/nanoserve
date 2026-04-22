@@ -61,11 +61,13 @@ def baseline_nanoserve(
     max_batch_size: int = 1,
     quant_mode: str = "none",
     admission_policy: str = "fcfs",
+    prefix_cache_capacity: int = 0,
     workload: str = "closed-loop",
     num_requests: int = 20,
     concurrency: int = 1,
     rate: float = 2.0,
     max_new_tokens: int = 128,
+    shared_prefix_tokens: int = 0,
 ):
     """run the nanoserve engine as a backend. flag-flipped ablation: pass
     batching_mode=serial|continuous, quant_mode=none|int8,
@@ -80,6 +82,7 @@ def baseline_nanoserve(
             max_batch_size=max_batch_size,
             quant_mode=quant_mode,
             admission_policy=admission_policy,
+            prefix_cache_capacity=prefix_cache_capacity,
         ),
         WorkloadSpec(
             kind=workload,
@@ -87,6 +90,7 @@ def baseline_nanoserve(
             concurrency=concurrency,
             rate=rate,
             max_new_tokens=max_new_tokens,
+            shared_prefix_tokens=shared_prefix_tokens,
         ),
     )
 
