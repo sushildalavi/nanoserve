@@ -101,7 +101,7 @@ def test_l4_quant_close_to_fp16(guard):
             failures.append((p, head_fp, head_qu))
 
     assert not failures, (
-        "int8 quant diverged from fp16 on first-{k} tokens:\n".format(k=FIRST_K)
+        f"int8 quant diverged from fp16 on first-{FIRST_K} tokens:\n"
         + "\n".join(
             f"  {p!r}\n    fp16: {a}\n    int8: {b}" for p, a, b in failures
         )
