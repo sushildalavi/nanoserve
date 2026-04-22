@@ -8,6 +8,7 @@ import time
 from collections.abc import AsyncIterator
 
 import httpx
+import psutil
 
 from nanoserve.baselines.base import Backend
 from nanoserve.config import REPO_ROOT, ModelSpec
@@ -111,6 +112,22 @@ class LlamaCppBackend(Backend):
         if not text:
             return 0
         return max(1, len(text) // 4)
+
+    def get_mem_mb(self) -> float:
+        driver = psutil.Process().memory_info().rss
+        if self._proc is None:
+            return driver / (1024 * 1024)
+        try:
+            server = psutil.Process(self._proc.pid)
+            total = driver + server.memory_info().rss
+            for child in server.children(recursive=True):
+                try:
+                    total += child.memory_info().rss
+                except psutil.NoSuchProcess:
+                    continue
+            return total / (1024 * 1024)
+        except psutil.NoSuchProcess:
+            return driver / (1024 * 1024)
 
     async def generate_stream(self, prompt: str, max_new_tokens: int) -> AsyncIterator[str]:
         if self._client is None:

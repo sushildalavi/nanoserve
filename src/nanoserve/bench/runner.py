@@ -2,7 +2,6 @@ import asyncio
 import time
 from dataclasses import asdict
 
-import psutil
 from rich.console import Console
 
 from nanoserve.bench.metrics import RequestRecord, aggregate
@@ -86,8 +85,7 @@ async def _run_async(
     )
 
     await backend.start()
-    proc = psutil.Process()
-    mem_peak = proc.memory_info().rss / (1024 * 1024)
+    mem_peak = backend.get_mem_mb()
 
     results: list[RequestRecord] = []
     t0 = time.time()
@@ -107,7 +105,7 @@ async def _run_async(
         tasks = [asyncio.create_task(_drive_one(backend, r, t0, results)) for r in reqs]
         for fut in asyncio.as_completed(tasks):
             await fut
-            cur = proc.memory_info().rss / (1024 * 1024)
+            cur = backend.get_mem_mb()
             if cur > mem_peak:
                 mem_peak = cur
 

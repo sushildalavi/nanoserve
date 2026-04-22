@@ -2,6 +2,8 @@ from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 
+import psutil
+
 
 @dataclass
 class GenOutput:
@@ -28,3 +30,10 @@ class Backend(ABC):
 
     @abstractmethod
     def count_tokens(self, text: str) -> int: ...
+
+    def get_mem_mb(self) -> float:
+        """resident memory attributable to this backend in mb.
+        default assumes the backend lives in the current process (hf-mps).
+        subclasses that spawn a subprocess should override.
+        """
+        return psutil.Process().memory_info().rss / (1024 * 1024)
