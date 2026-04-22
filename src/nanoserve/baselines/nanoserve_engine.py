@@ -44,9 +44,18 @@ class NanoServeBackend(Backend):
 
     def _snapshot_stats(self) -> dict:
         stats = self._engine._scheduler.stats
+        total_forwards = (
+            self._engine.batched_forward_steps + self._engine.single_forward_steps
+        )
+        batched_frac = (
+            self._engine.batched_forward_steps / total_forwards
+            if total_forwards
+            else 0.0
+        )
         return {
             "avg_batch_size": round(stats.avg_batch_size, 3),
             "max_batch_size": stats.max_active,
+            "batched_forward_frac": round(batched_frac, 3),
         }
 
     def count_tokens(self, text: str) -> int:

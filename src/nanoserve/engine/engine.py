@@ -47,6 +47,13 @@ class NanoServeEngine(EngineService):
         self._stop = threading.Event()
         self._driver: threading.Thread | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
+        # actual forward-pass counters. scheduler stats track "how many seqs
+        # were active" each iteration, which is different from "how many
+        # forwards actually ran as a single batched call vs N separate
+        # single-seq calls". this distinction matters for interpreting
+        # continuous-mode results under poisson load.
+        self.batched_forward_steps: int = 0
+        self.single_forward_steps: int = 0
 
     async def start(self) -> None:
         import torch
@@ -199,9 +206,11 @@ class NanoServeEngine(EngineService):
 
             if self._can_batch_forward(batch):
                 self._decode_batch(batch, torch)
+                self.batched_forward_steps += 1
             else:
                 for seq in batch:
                     self._decode_one(seq, torch)
+                    self.single_forward_steps += 1
 
             for seq in batch:
                 stop = seq.should_stop()
