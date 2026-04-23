@@ -17,6 +17,7 @@ help:
 	@echo "  baseline-llamacpp  run llama.cpp baseline"
 	@echo "  parity             run parity test across backends"
 	@echo "  bench              run full baseline sweep"
+	@echo "  serve              start the openai-compatible api server on :8000"
 
 $(VENV):
 	$(PY) -m venv $(VENV)
@@ -52,6 +53,9 @@ parity:
 
 bench:
 	$(PYV) -m nanoserve.cli bench sweep
+
+serve:
+	$(PYV) -m nanoserve.cli serve --host 127.0.0.1 --port 8000
 
 clean:
 	rm -rf build dist *.egg-info .ruff_cache .pytest_cache

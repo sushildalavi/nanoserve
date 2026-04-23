@@ -23,9 +23,9 @@ Phase 1 (measurement first). Benchmark harness, load generator, and baselines la
 - [x] phase 3B: forward/overhead timing + synchronized admission policy + paired sweep (fp16+int8 each)
 - [x] phase 3C: prefix cache (LCP-matching with on-the-fly cache slicing) + L5-prefix parity + sweep
 - [x] phase 3D: torch 2.8 + torchao 0.9 vs hand-rolled int8 — confirms platform constraint (no native int8 matmul on MPS)
+- [x] phase 4: openai-compatible streaming api (FastAPI + SSE) + prometheus metrics + serve CLI + 6 integration tests
 - [ ] MLX port: only remaining option to make int8 actually beat fp16 on Apple Silicon
 - [ ] true paged KV with custom Metal attention kernels (vLLM territory; deferred — not implementable in pure pytorch)
-- [ ] prometheus + grafana
 
 ## Quickstart
 
@@ -35,9 +35,34 @@ make models           # downloads tinyllama gguf + builds llama.cpp with metal
 make baseline-hf
 make baseline-llamacpp
 make parity
+make serve            # starts the openai-compatible api on :8000
 ```
 
 Results land in `results/ablations.csv` (headline table) and `results/runs/*.json` (per-run dumps with full config, env, and per-request records).
+
+### Hit it like the OpenAI API
+
+Once `make serve` is running:
+
+```bash
+# health
+curl localhost:8000/health
+
+# non-streaming completion
+curl -s localhost:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"tinyllama-1.1b-chat","messages":[{"role":"user","content":"Hello"}],"max_tokens":32}'
+
+# streaming completion (SSE)
+curl -N localhost:8000/v1/chat/completions \
+  -H 'content-type: application/json' \
+  -d '{"model":"tinyllama-1.1b-chat","messages":[{"role":"user","content":"Tell me a fact about cats."}],"max_tokens":64,"stream":true}'
+
+# prometheus metrics
+curl localhost:8000/metrics | grep nanoserve_
+```
+
+The same engine + scheduler + prefix cache + INT8 path the bench harness drives is what the API serves — there is no second implementation. Phase 1 designed the `EngineService` interface specifically so the API and the bench could share an engine.
 
 ## The ablation table
 
@@ -217,6 +242,41 @@ Phase 3A's diagnosis predicted that the INT8 throughput regression was platform-
 > *"Built an LLM serving engine on Apple Silicon. The first ablation showed continuous batching produced flat throughput. Added per-step timing instrumentation to distinguish scheduled batches from truly batched forwards (`batched_forward_frac`). That metric showed the FCFS admission policy was producing 0% true batching under variable-length Poisson workloads. Implemented synchronized admission, lifting `batched_forward_frac` from 0.0 → 0.83 and INT8 throughput by 2×. Implemented prefix caching with longest-common-prefix matching for system-prompt-heavy workloads, +10% throughput. Tested the platform pivot to torchao for native Metal int8 matmul; torchao falls back to the same dequant-fp16 path my hand-rolled module uses because Triton is unavailable on macOS, confirming the platform-constraint diagnosis. Documented the only remaining path (MLX port) and the regimes where each technique helps. Five correctness gates (L1, L2, L3, L3-var, L5-prefix) cover all of it. ~70 commits across 1.5 days."*
 
 That's the actual story. It's not "I made a fast LLM server." It's "I built a measurement framework that answered well-defined questions about a real system, including diagnosing where the techniques don't help and why."
+
+### Phase 4 — OpenAI-compatible API + Prometheus observability
+
+The locked 8-feature scope had two production-shape items left after Phase 3: an OpenAI-compatible HTTP server (feature 1) and Prometheus observability (feature 4). Phase 4 ships both, plus a CLI subcommand to start the server and a 6-test integration suite that runs the full request/response path in-process via `httpx.ASGITransport`.
+
+**The server** ([`src/nanoserve/server/api.py`](src/nanoserve/server/api.py)):
+- `POST /v1/chat/completions` — accepts the OpenAI ChatCompletion request schema (subset; `extra='ignore'` so optional client fields don't break validation). Greedy decode only.
+- `stream=true` returns `text/event-stream` with one `data: {chunk}` line per produced token, an opening role chunk, a closing chunk with `finish_reason`, and the OpenAI `data: [DONE]` terminator.
+- `stream=false` returns a single `ChatCompletion` JSON with `usage.prompt_tokens` / `completion_tokens` / `total_tokens` populated by the engine's tokenizer.
+- `GET /health` — liveness + the engine config snapshot.
+- `GET /metrics` — Prometheus text format. Refreshes the engine state gauges on each scrape so the values are point-in-time, not stale.
+
+**The metrics module** ([`src/nanoserve/server/metrics.py`](src/nanoserve/server/metrics.py)):
+- Counters: `nanoserve_requests_total{status}`, `nanoserve_input_tokens_total`, `nanoserve_output_tokens_total`, `nanoserve_prefix_cache_hits_total`, `nanoserve_prefix_cache_misses_total`
+- Histograms: `nanoserve_ttft_seconds`, `nanoserve_tpot_seconds`, `nanoserve_e2e_seconds` (buckets chosen from the empirical distribution observed in the Phase 1–3 sweeps)
+- Gauges: `nanoserve_active_seqs`, `nanoserve_batched_forward_frac`, `nanoserve_prefix_cache_size`
+- Dedicated `CollectorRegistry` so `/metrics` only emits nanoserve numbers — no Python GC counters from the global default registry polluting the scrape.
+- Cache hit/miss counters use a delta-based update that survives engine restarts without going backward (Prometheus counter invariant).
+
+**The hard bug worth naming.** The first version of the API integration test froze indefinitely on the first request. Symptom: the `/health` and `/metrics` tests passed, but the chat-completion test hung forever at 0% CPU. Root cause: the test fixture used `asyncio.run()` to start the engine, which creates a transient event loop. The engine's driver thread captured a reference to that loop in `start()` (via `asyncio.get_running_loop()`), and later when each test ran in its OWN new loop (pytest-asyncio's default), the driver's `loop.call_soon_threadsafe(q.put_nowait, ev)` kept calling against the dead loop. The puts dropped silently, the per-request asyncio.Queue never got events, the test waited forever. Fix: `asyncio_default_fixture_loop_scope = "module"` in pyproject + an async fixture with `loop_scope="module"` so the driver and the tests share one loop. Documented inline in [`tests/test_server_api.py`](tests/test_server_api.py) as the kind of thing that bites once and is obvious in retrospect.
+
+**The integration tests** (all 6 pass in ~6 s):
+- `test_health_returns_engine_config` — `/health` returns 200 + the configured engine knobs
+- `test_metrics_endpoint_returns_prometheus_text` — `/metrics` is parseable Prometheus text
+- `test_chat_completion_non_streaming` — `stream=false` returns a complete `ChatCompletion` with usage
+- `test_chat_completion_streaming_emits_sse_chunks` — `stream=true` emits role chunk + content chunks + finish chunk + `[DONE]`
+- `test_request_metrics_increment` — `nanoserve_requests_total{status="ok"}` grows after a real completion
+- `test_empty_messages_rejected` — empty `messages` returns 400 (validation works)
+
+Plus 8 unit tests for the metrics module (counter increments, histogram bucket emission, delta-based gauge refresh, no-engine safety).
+
+**Total test suite: 69/69 passing.** Phase 4 added the server (2 modules), the CLI subcommand, 14 new tests, and the deps (`fastapi`, `uvicorn`, `prometheus-client`, `pytest-asyncio`).
+
+**The full project arc as a single resume bullet:**
+> *"Built an end-to-end LLM serving stack from scratch on Apple Silicon: continuous-batching scheduler with fcfs/synchronized admission policies, mixed-length batched forward with attention masking, EOS retirement, longest-common-prefix KV reuse with on-the-fly cache slicing, INT8 weight-only quantization (hand-rolled and torchao paths), per-step forward/overhead instrumentation, OpenAI-compatible streaming API with Prometheus observability. Six correctness gates (token-exact greedy parity for single-seq, interleaved, batched, variable-length, prefix-cached, and quantized paths) plus 14 system/unit tests covering the scheduler state machine, prefix cache LRU semantics, metrics module, and full request/response API. 13 ablation rows in a locked CSV with reproducible run scripts. ~95 commits across 1.5 days. Every claim in the README is backed by a number that came out of a run."*
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
