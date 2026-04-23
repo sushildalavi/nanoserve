@@ -7,6 +7,39 @@ app.add_typer(baseline_app, name="baseline")
 app.add_typer(bench_app, name="bench")
 
 
+@app.command("serve")
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    batching_mode: str = "continuous",
+    max_batch_size: int = 4,
+    quant_mode: str = "none",
+    admission_policy: str = "synchronized",
+    prefix_cache_capacity: int = 16,
+):
+    """start the openai-compatible api server. flags are passed to the
+    engine via env vars so the same defaults work whether you set them
+    here or via NANOSERVE_* in the deployment environment.
+    """
+    import os
+
+    import uvicorn
+
+    os.environ["NANOSERVE_BATCHING_MODE"] = batching_mode
+    os.environ["NANOSERVE_MAX_BATCH_SIZE"] = str(max_batch_size)
+    os.environ["NANOSERVE_QUANT_MODE"] = quant_mode
+    os.environ["NANOSERVE_ADMISSION_POLICY"] = admission_policy
+    os.environ["NANOSERVE_PREFIX_CACHE_CAPACITY"] = str(prefix_cache_capacity)
+
+    typer.echo(
+        f"starting nanoserve api on {host}:{port} "
+        f"(batching={batching_mode}, max_batch={max_batch_size}, "
+        f"quant={quant_mode}, admit={admission_policy}, "
+        f"prefix_cache={prefix_cache_capacity})"
+    )
+    uvicorn.run("nanoserve.server.api:app", host=host, port=port, log_level="info")
+
+
 @baseline_app.command("hf")
 def baseline_hf(
     workload: str = "poisson",
