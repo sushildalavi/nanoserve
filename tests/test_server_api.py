@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
 from nanoserve.config import tinyllama_nanoserve
@@ -26,9 +27,6 @@ def _mps_available() -> bool:
         return torch.backends.mps.is_available()
     except ImportError:
         return False
-
-
-import pytest_asyncio
 
 
 @pytest_asyncio.fixture(scope="module", loop_scope="module")
