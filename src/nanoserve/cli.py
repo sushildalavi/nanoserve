@@ -90,6 +90,34 @@ def baseline_llamacpp(
     )
 
 
+@baseline_app.command("mlx")
+def baseline_mlx(
+    quant_mode: str = "fp16",
+    workload: str = "closed-loop",
+    num_requests: int = 20,
+    concurrency: int = 1,
+    rate: float = 2.0,
+    max_new_tokens: int = 64,
+):
+    """run the MLX backend — apple's native ML framework with native
+    Metal int4/int8 matmul. serial generation only. the int4 row is the
+    one worth comparing vs the pytorch-MPS int4 row in ablations.csv.
+    """
+    from nanoserve.bench.runner import run_baseline
+    from nanoserve.config import WorkloadSpec, tinyllama_mlx
+
+    run_baseline(
+        tinyllama_mlx(quant_mode=quant_mode),
+        WorkloadSpec(
+            kind=workload,
+            num_requests=num_requests,
+            concurrency=concurrency,
+            rate=rate,
+            max_new_tokens=max_new_tokens,
+        ),
+    )
+
+
 @baseline_app.command("nanoserve")
 def baseline_nanoserve(
     batching_mode: str = "serial",

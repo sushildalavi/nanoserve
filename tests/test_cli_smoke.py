@@ -19,11 +19,18 @@ def test_top_level_help():
         assert cmd in r.output, f"{cmd} missing from top-level help: {r.output}"
 
 
-def test_baseline_help_has_three_backends():
+def test_baseline_help_has_all_backends():
     r = runner.invoke(app, ["baseline", "--help"])
     assert r.exit_code == 0
-    for backend in ("hf", "llamacpp", "nanoserve"):
+    for backend in ("hf", "llamacpp", "nanoserve", "mlx"):
         assert backend in r.output
+
+
+def test_baseline_mlx_help_lists_quant_modes():
+    r = runner.invoke(app, ["baseline", "mlx", "--help"])
+    assert r.exit_code == 0
+    # accepts the --quant-mode flag
+    assert "quant-mode" in r.output
 
 
 def test_eval_help_has_both_commands():
