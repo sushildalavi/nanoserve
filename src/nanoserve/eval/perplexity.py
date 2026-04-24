@@ -92,14 +92,23 @@ def compute_perplexity(
             target[:, :overlap] = -100
 
         out = model(window, labels=target)
-        # HF returns mean CE over non-ignored tokens. recover the sum:
-        valid = (target != -100).sum().item()
-        # labels are shifted internally; the model excludes the last
-        # position from loss, so "valid" double-counts by 1 — subtract.
-        valid = max(0, valid - 1)
-        if valid > 0:
-            nlls.append(out.loss.detach().float() * valid)
-            counted_tokens += valid
+        # HF causal-LM loss shifts labels internally: shift_labels = labels[1:].
+        # the averaging denominator is the count of shift positions where the
+        # shifted label is not -100. work that out directly instead of
+        # approximating from the unshifted mask:
+        #   - shift_labels has (N-1) positions (0..N-2), corresponding to labels[1..N-1]
+        #   - labels[i] == -100 for i in [0, overlap) -> shift positions [0, overlap-1) are ignored
+        #   - so valid count = (N - 1) - max(0, overlap - 1)
+        #                    = N - overlap   if overlap >= 1
+        #                    = N - 1         if overlap == 0
+        total_positions = target.shape[-1]
+        if overlap == 0:
+            valid_for_mean = total_positions - 1
+        else:
+            valid_for_mean = total_positions - overlap
+        if valid_for_mean > 0 and torch.isfinite(out.loss):
+            nlls.append(out.loss.detach().float() * valid_for_mean)
+            counted_tokens += valid_for_mean
 
         prev_end = end
         if end == total_tokens:
