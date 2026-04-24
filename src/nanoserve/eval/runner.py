@@ -70,10 +70,10 @@ def run_eval(
 
     if append_csv:
         Path(EVAL_CSV).parent.mkdir(parents=True, exist_ok=True)
-        new_file = not EVAL_CSV.exists()
+        need_header = not EVAL_CSV.exists() or EVAL_CSV.stat().st_size == 0
         csv_fh = open(EVAL_CSV, "a", newline="")
         writer = csv.DictWriter(csv_fh, fieldnames=EVAL_FIELDS)
-        if new_file:
+        if need_header:
             writer.writeheader()
     else:
         csv_fh = None
