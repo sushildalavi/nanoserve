@@ -210,10 +210,10 @@ def _score_ending_nll(model, tokenizer, ctx: str, ending: str, device) -> float:
     labels = full_ids.clone()
     labels[:, :ctx_len] = -100
     out = model(full_ids, labels=labels)
-    # HF shifts internally; loss is mean over valid positions.
-    # valid count = ending_len - 1 (last ending token has no next-token label).
-    valid = max(1, ending_len - 1)
-    return out.loss.item()  # already mean; normalization by `valid` is implicit
+    # HF shifts internally; out.loss is already mean NLL over valid
+    # ending positions (ending_len - 1 of them). we only need the mean
+    # to rank endings, so return the loss directly.
+    return out.loss.item()
 
 
 @torch.inference_mode()
