@@ -87,13 +87,19 @@ def run_eval(
             model, tokenizer = load_model(mode, model_path, device)
             t_load = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
-            ppl = compute_perplexity(model, tokenizer, corpus, device)
-            t_ppl = time.perf_counter() - t0
+            try:
+                t0 = time.perf_counter()
+                ppl = compute_perplexity(model, tokenizer, corpus, device)
+                t_ppl = time.perf_counter() - t0
 
-            t0 = time.perf_counter()
-            hs = score_items(model, tokenizer, hs_items, device)
-            t_hs = time.perf_counter() - t0
+                t0 = time.perf_counter()
+                hs = score_items(model, tokenizer, hs_items, device)
+                t_hs = time.perf_counter() - t0
+            finally:
+                # free the loaded model BEFORE the next mode's load_model
+                # runs even if compute_perplexity / score_items raises,
+                # otherwise a single bad mode can OOM the whole sweep.
+                _free_model(model)
 
             row = {
                 "timestamp": dt.datetime.now(dt.UTC)
@@ -124,7 +130,6 @@ def run_eval(
                 f"    ppl={row['ppl']:>8}  hs_acc={row['hs_accuracy']:>6}  "
                 f"({int(hs['n'])} items, {ppl_corpus_name}/{hs_source})"
             )
-            _free_model(model)
     finally:
         if csv_fh is not None:
             csv_fh.close()
