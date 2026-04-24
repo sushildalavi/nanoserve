@@ -1,0 +1,28 @@
+# prometheus-operator CRD. apply only if the operator is installed in
+# the cluster — `kubectl apply -f deploy/k8s/servicemonitor.yaml` will
+# fail fast with "no matches for kind ServiceMonitor" otherwise, which
+# is the signal to stick with the pod-annotation scrape config instead.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: nanoserve
+  namespace: nanoserve
+  labels:
+    app.kubernetes.io/name: nanoserve
+    app.kubernetes.io/component: api
+    # many prometheus-operator installs pick up ServiceMonitors by this
+    # label; tune for your operator's selector.
+    release: prometheus
+spec:
+  namespaceSelector:
+    matchNames:
+      - nanoserve
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: nanoserve
+      app.kubernetes.io/component: api
+  endpoints:
+    - port: metrics
+      path: /metrics
+      interval: 5s
+      scrapeTimeout: 3s

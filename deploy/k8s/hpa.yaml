@@ -1,0 +1,40 @@
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: nanoserve
+  namespace: nanoserve
+  labels:
+    app.kubernetes.io/name: nanoserve
+    app.kubernetes.io/component: api
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: nanoserve
+  minReplicas: 1
+  maxReplicas: 4
+  metrics:
+    # CPU-based signal works without Prometheus-Adapter installed.
+    # prefer a custom metric (nanoserve_requests_total RPS per pod)
+    # once a metrics adapter is in the cluster — see README.
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70
+  behavior:
+    scaleDown:
+      # slow scale-down to avoid churn while a model is loading in the
+      # pod we would otherwise kill.
+      stabilizationWindowSeconds: 300
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120
+    scaleUp:
+      stabilizationWindowSeconds: 30
+      policies:
+        - type: Percent
+          value: 100
+          periodSeconds: 60

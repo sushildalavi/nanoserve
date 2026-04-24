@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nanoserve-config
+  namespace: nanoserve
+  labels:
+    app.kubernetes.io/name: nanoserve
+    app.kubernetes.io/component: api
+data:
+  # engine knobs — mirror the env-var contract the cli / api layer reads.
+  # changes here roll out via a deployment rollout (annotation-based
+  # checksum would make this automatic; we keep it explicit for clarity).
+  NANOSERVE_BATCHING_MODE: "continuous"
+  NANOSERVE_MAX_BATCH_SIZE: "4"
+  NANOSERVE_QUANT_MODE: "none"
+  NANOSERVE_ADMISSION_POLICY: "synchronized"
+  NANOSERVE_PREFIX_CACHE_CAPACITY: "16"

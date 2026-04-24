@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: nanoserve
+  labels:
+    app.kubernetes.io/name: nanoserve
+    app.kubernetes.io/part-of: nanoserve
