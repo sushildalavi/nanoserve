@@ -9,5 +9,8 @@ providers:
     updateIntervalSeconds: 10
     allowUiUpdates: true
     options:
-      path: /Users/sushildalavi/Desktop/Github/nanoserve/ops/grafana/dashboards
+      # resolved at startup via observe.sh — grafana expands $VAR in
+      # provisioning yaml since v9.0. using an env var keeps this repo-
+      # location-independent (i.e. the repo can be cloned anywhere).
+      path: $NANOSERVE_DASHBOARDS_PATH
       foldersFromFilesStructure: false

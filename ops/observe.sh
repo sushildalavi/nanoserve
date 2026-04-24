@@ -9,7 +9,12 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 data="$here/data"
 mkdir -p "$data/prom" "$data/grafana" "$data/grafana/logs" "$data/grafana/plugins"
 
-prom_bin="$(command -v prometheus)"
+prom_bin="$(command -v prometheus || true)"
+if [[ -z "$prom_bin" ]]; then
+  echo "prometheus not found on PATH. did you run: brew install prometheus ?" >&2
+  exit 1
+fi
+
 grafana_bin="$(command -v grafana-server || command -v grafana || true)"
 if [[ -z "$grafana_bin" ]]; then
   echo "grafana not found on PATH. did you run: brew install grafana ?" >&2
@@ -41,6 +46,9 @@ export GF_SECURITY_ADMIN_PASSWORD=admin
 export GF_SERVER_HTTP_PORT=3000
 export GF_ANALYTICS_REPORTING_ENABLED=false
 export GF_ANALYTICS_CHECK_FOR_UPDATES=false
+# read by the dashboard provisioning yaml (via grafana env-var expansion)
+# so the dashboards directory path stays tied to where the repo lives.
+export NANOSERVE_DASHBOARDS_PATH="$here/grafana/dashboards"
 
 if [[ "$(basename "$grafana_bin")" == "grafana" ]]; then
   "$grafana_bin" server --homepath="$grafana_homepath" >"$data/grafana.log" 2>&1 &
