@@ -1,0 +1,19 @@
+global:
+  scrape_interval: 5s
+  evaluation_interval: 5s
+  external_labels:
+    env: docker-compose
+
+scrape_configs:
+  - job_name: nanoserve
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - nanoserve:8000
+        labels:
+          instance: nanoserve-container
+
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - localhost:9090

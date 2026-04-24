@@ -1,0 +1,74 @@
+# full local stack — nanoserve api + prometheus + grafana wired together.
+# run with: docker compose up --build
+# open:     http://localhost:3000  (admin / admin)  -> dashboards -> nanoserve
+#
+# caveat: nanoserve runs on CPU inside the container (MPS is macOS-only).
+# use `make serve` on the host if you want GPU acceleration; this compose
+# file is for portability / ci / demo purposes.
+
+services:
+  nanoserve:
+    build:
+      context: .
+    container_name: nanoserve
+    environment:
+      NANOSERVE_BATCHING_MODE: serial
+      NANOSERVE_MAX_BATCH_SIZE: "1"
+      NANOSERVE_QUANT_MODE: none
+      NANOSERVE_ADMISSION_POLICY: fcfs
+      NANOSERVE_PREFIX_CACHE_CAPACITY: "0"
+    ports:
+      - "8000:8000"
+    volumes:
+      # persist huggingface weight cache across restarts
+      - hf-cache:/app/.cache/huggingface
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 120s
+
+  prometheus:
+    image: prom/prometheus:v2.55.1
+    container_name: nanoserve-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+      - "--web.enable-lifecycle"
+    volumes:
+      - ./ops/prometheus.docker.yml:/etc/prometheus/prometheus.yml:ro
+      - prom-data:/prometheus
+    ports:
+      - "9090:9090"
+    depends_on:
+      - nanoserve
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:11.3.0
+    container_name: nanoserve-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # resolves the $NANOSERVE_DASHBOARDS_PATH placeholder in
+      # ops/grafana/provisioning/dashboards/default.yml so the same
+      # provisioning file works on host brew + in-container grafana.
+      NANOSERVE_DASHBOARDS_PATH: /var/lib/grafana/dashboards
+    volumes:
+      - ./ops/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./ops/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  hf-cache:
+  prom-data:
+  grafana-data:

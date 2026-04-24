@@ -35,7 +35,11 @@ class NanoServeEngine(EngineService):
         prefix_cache_capacity: int = 0,
     ):
         self.model_spec = model_spec
-        self._device = "mps"
+        # device chosen at start() time so we can fall back to cpu in
+        # environments without MPS (linux containers, CI). on Apple
+        # Silicon native, MPS is selected and all phase 1-5 numbers
+        # remain reproducible.
+        self._device: str = "cpu"
         self.quant_mode = quant_mode
         self.weight_bytes_saved: int = 0
         self.num_layers_quantized: int = 0
@@ -79,8 +83,13 @@ class NanoServeEngine(EngineService):
         import torch
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
-        if not torch.backends.mps.is_available():
-            raise RuntimeError("mps not available")
+        # prefer MPS when on Apple Silicon; fall back to CPU otherwise
+        # (containerized / CI). cpu serving is dog-slow (1-2 tok/s on
+        # TinyLlama) but keeps the serve endpoint functional.
+        if torch.backends.mps.is_available():
+            self._device = "mps"
+        else:
+            self._device = "cpu"
 
         self._loop = asyncio.get_running_loop()
         self._tokenizer = AutoTokenizer.from_pretrained(self.model_spec.path)
