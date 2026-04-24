@@ -103,7 +103,7 @@ def baseline_nanoserve(
     shared_prefix_tokens: int = 0,
 ):
     """run the nanoserve engine as a backend. flag-flipped ablation: pass
-    batching_mode=serial|continuous, quant_mode=none|int8,
+    batching_mode=serial|continuous, quant_mode=none|int8|int4|torchao_int8,
     admission_policy=fcfs|synchronized, etc.
     """
     from nanoserve.bench.runner import run_baseline

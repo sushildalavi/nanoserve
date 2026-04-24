@@ -99,6 +99,11 @@ class NanoServeEngine(EngineService):
             n, saved = quantize_model_int8_weight_only(self._model)
             self.num_layers_quantized = n
             self.weight_bytes_saved = saved
+        elif self.quant_mode == "int4":
+            from nanoserve.engine.quant_int4 import quantize_model_int4_weight_only
+            n, saved = quantize_model_int4_weight_only(self._model)
+            self.num_layers_quantized = n
+            self.weight_bytes_saved = saved
         elif self.quant_mode == "torchao_int8":
             # torchao's tensor-subclass int8 weight-only path. on MPS this
             # still goes through fp16 matmul (no native int8 kernel) but

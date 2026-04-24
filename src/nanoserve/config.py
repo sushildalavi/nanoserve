@@ -16,7 +16,7 @@ class ModelSpec:
     # nanoserve-engine only
     batching_mode: str = "serial"
     max_batch_size: int = 1
-    quant_mode: str = "none"  # "none" | "int8" — nanoserve engine internal quant
+    quant_mode: str = "none"  # "none" | "int8" | "int4" | "torchao_int8"
     admission_policy: str = "fcfs"  # "fcfs" | "synchronized"
     prefix_cache_capacity: int = 0  # 0 = disabled, >0 = LRU capacity
 
