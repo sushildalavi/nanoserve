@@ -167,7 +167,10 @@ def bench_sweep():
 def eval_all(
     quant: str = typer.Option(
         "fp16,int8,int4",
-        help="comma-separated list of quant modes. supported: fp16,int8,int4,torchao_int8",
+        help=(
+            "comma-separated quant modes. supported: fp16, int8, int4, "
+            "torchao_int8 (pytorch-MPS); fp16-mlx, int4-mlx, int8-mlx (MLX)."
+        ),
     ),
     hs_items: int = 100,
     offline: bool = typer.Option(

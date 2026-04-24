@@ -82,24 +82,49 @@ def run_eval(
     rows: list[dict] = []
     try:
         for mode in quant_modes:
-            print(f"==> eval {mode} on {device}")
+            is_mlx = "mlx" in mode  # accepts "mlx-int4", "int4-mlx", etc.
+            device_str = "mlx" if is_mlx else str(device)
+            print(f"==> eval {mode} on {device_str}")
+
             t0 = time.perf_counter()
-            model, tokenizer = load_model(mode, model_path, device)
+            if is_mlx:
+                from nanoserve.eval.mlx_eval import load_mlx_model
+                model, tokenizer = load_mlx_model(mode, model_path)
+            else:
+                model, tokenizer = load_model(mode, model_path, device)
             t_load = time.perf_counter() - t0
 
             try:
-                t0 = time.perf_counter()
-                ppl = compute_perplexity(model, tokenizer, corpus, device)
-                t_ppl = time.perf_counter() - t0
+                if is_mlx:
+                    from nanoserve.eval.mlx_eval import (
+                        compute_perplexity_mlx,
+                        score_items_mlx,
+                    )
+                    t0 = time.perf_counter()
+                    ppl = compute_perplexity_mlx(model, tokenizer, corpus)
+                    t_ppl = time.perf_counter() - t0
 
-                t0 = time.perf_counter()
-                hs = score_items(model, tokenizer, hs_items, device)
-                t_hs = time.perf_counter() - t0
+                    t0 = time.perf_counter()
+                    hs = score_items_mlx(model, tokenizer, hs_items)
+                    t_hs = time.perf_counter() - t0
+                else:
+                    t0 = time.perf_counter()
+                    ppl = compute_perplexity(model, tokenizer, corpus, device)
+                    t_ppl = time.perf_counter() - t0
+
+                    t0 = time.perf_counter()
+                    hs = score_items(model, tokenizer, hs_items, device)
+                    t_hs = time.perf_counter() - t0
             finally:
                 # free the loaded model BEFORE the next mode's load_model
                 # runs even if compute_perplexity / score_items raises,
                 # otherwise a single bad mode can OOM the whole sweep.
-                _free_model(model)
+                if not is_mlx:
+                    _free_model(model)
+                else:
+                    # mlx uses its own allocator; drop the python ref.
+                    del model
+                    gc.collect()
 
             row = {
                 "timestamp": dt.datetime.now(dt.UTC)
@@ -108,7 +133,7 @@ def run_eval(
                     .replace("+00:00", "Z"),
                 "model": Path(model_path).name,
                 "quant_mode": mode,
-                "device": str(device),
+                "device": device_str,
                 "ppl": f"{ppl['ppl']:.4f}",
                 "ppl_corpus": ppl_corpus_name,
                 "ppl_tokens": ppl["tokens"],
