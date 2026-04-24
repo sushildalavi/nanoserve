@@ -336,6 +336,8 @@ The engine phases (1–4 and 5B) are all about speed. Phase 5C adds the quality 
 
 The runner ([`src/nanoserve/eval/runner.py`](src/nanoserve/eval/runner.py)) loads each quant mode, scores, unloads the model (to keep peak memory bounded), and appends a row with full environment metadata: torch version, host, corpus source, wall-clock timings. CLI: `nanoserve eval all --quant fp16,int8,int4` (default) or `--offline` to force the fixture path.
 
+**Test-suite state after Phase 5:** 84 tests collected. Phase 5 added 15 (9 int4 pack/unpack unit tests, L4-quant-int4 engine parity gate, 5 offline eval-harness tests). Non-MPS subset (67 tests: metrics, workload, scheduler, prefix cache, int4 quant, eval fixtures) runs in under 1s; MPS-only subset (17 tests: L1/L2/L3/L3-var/L4/L4-int4/L5 parity + EOS + server integration) runs on the M3 Air on the user's side.
+
 ### How to read a row
 
 - **workload `closed-loop c=N`** — N concurrent clients, each fires the next request as soon as the current one finishes. Measures raw serving capacity with no queuing effects.
