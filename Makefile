@@ -1,4 +1,4 @@
-.PHONY: help install dev-install fmt lint test clean models baseline-hf baseline-llamacpp bench parity serve observe eval
+.PHONY: help install dev-install fmt lint test clean models baseline-hf baseline-llamacpp bench parity serve observe eval docker-build docker-up docker-down k8s-render k8s-apply
 
 PY ?= python3.11
 VENV ?= .venv
@@ -20,6 +20,11 @@ help:
 	@echo "  serve              start the openai-compatible api server on :8000"
 	@echo "  observe            start local prometheus + grafana (brew) pointed at :8000/metrics"
 	@echo "  eval               run the quality eval harness (perplexity + hellaswag-mini)"
+	@echo "  docker-build       build the cpu-only nanoserve container image"
+	@echo "  docker-up          docker compose up --build (api + prom + grafana stack)"
+	@echo "  docker-down        stop and remove the compose stack"
+	@echo "  k8s-render         kubectl kustomize deploy/k8s (no cluster required)"
+	@echo "  k8s-apply          kubectl apply -k deploy/k8s (requires a live cluster)"
 
 $(VENV):
 	$(PY) -m venv $(VENV)
@@ -64,6 +69,21 @@ observe:
 
 eval:
 	$(PYV) -m nanoserve.cli eval all
+
+docker-build:
+	docker build -t nanoserve:latest .
+
+docker-up:
+	docker compose up --build
+
+docker-down:
+	docker compose down
+
+k8s-render:
+	kubectl kustomize deploy/k8s
+
+k8s-apply:
+	kubectl apply -k deploy/k8s
 
 clean:
 	rm -rf build dist *.egg-info .ruff_cache .pytest_cache

@@ -17,9 +17,9 @@ Runs on an M3 MacBook Air. No CUDA, no cloud, no Kubernetes. The interesting par
 
 ## Not implemented (and why)
 
-- **True paged KV with custom Metal attention kernels** — vLLM territory. Not implementable in pure PyTorch on MPS; would require Metal kernel work. Prefix caching is the implementable subset shipped in its place.
-- **MLX port** — the only path to make int8/int4 actually beat fp16 on Apple Silicon (MLX has native Metal int8/int4 matmul; PyTorch-MPS does not). Clean pivot, multi-week scope. The Phase 3D write-up makes the case that the remaining gap is platform-level, not a bug.
-- Kubernetes / Ray Serve / gRPC / auth / multi-tenancy.
+- **True paged KV with custom Metal attention kernels** — vLLM territory. Not implementable in pure PyTorch on MPS; would require dropping to Metal shading language and writing attention kernels by hand. Multi-week specialist work that sits outside the "pure PyTorch on Apple Silicon" envelope. Prefix caching (Phase 3C) is the implementable subset shipped in its place.
+- **Ray Serve / gRPC / service mesh**. The OpenAI-compatible HTTP API is the serving contract; Ray Serve would be a routing layer and gRPC a second protocol. Neither teaches anything new about the engine, which is the portfolio thesis. Container + K8s scaffolding (Phase 6B) covers the "I know how to package this" axis.
+- **Auth / multi-tenancy** — not in scope for a single-model demo serving TinyLlama locally.
 
 ## Quickstart
 
@@ -357,6 +357,45 @@ Two takeaways:
 The runner ([`src/nanoserve/eval/runner.py`](src/nanoserve/eval/runner.py)) loads each quant mode, scores, frees the model in a `finally` block (so a single bad quant mode can't OOM the whole sweep), and appends a row with full environment metadata: torch version, host, corpus source, wall-clock timings. CLI: `nanoserve eval all --quant fp16,int8,int4` (default) or `--offline` to force the fixture path.
 
 **Test-suite state after Phase 5:** 84 tests collected. Phase 5 added 15 (9 int4 pack/unpack unit tests, L4-quant-int4 engine parity gate, 5 offline eval-harness tests). Non-MPS subset (67 tests: metrics, workload, scheduler, prefix cache, int4 quant, eval fixtures) runs in under 1s; MPS-only subset (17 tests: L1/L2/L3/L3-var/L4/L4-int4/L5 parity + EOS + server integration) runs on the M3 Air on the user's side.
+
+### Phase 6A — MLX backend (testing the platform hypothesis)
+
+Phase 3D's diagnosis: the int4 regression on pytorch-MPS is platform-level. No native Metal int4 matmul means every quantized forward dequants to fp16 before the matmul, paying the dequant tax on every step. The testable prediction: **run the same model at the same quant level through Apple's MLX framework, which has native Metal int4 matmul, and the sign of the comparison should flip.**
+
+Phase 6A implements exactly that — a minimal MLX backend at [`src/nanoserve/mlx_engine/engine.py`](src/nanoserve/mlx_engine/engine.py):
+
+- `mlx_lm.load(path)` pulls the HuggingFace TinyLlama checkpoint and converts to MLX weight format (cached in `~/.cache/huggingface`)
+- `mlx.nn.quantize(model, group_size=64, bits=4)` applies per-group symmetric int4 **in-place**; on Metal this routes to native int4 matmul kernels, which is the whole point
+- `mlx_lm.stream_generate` yields tokens; we bridge to the existing `Backend` interface so the phase-1 bench harness can drive it with zero runner-side changes
+
+Scope is deliberately serial (concurrency 1). The point of the port is not to replicate the scheduler — it's to isolate the platform variable. Install and run:
+
+```bash
+pip install -e '.[mlx]'
+bash scripts/run_phase6a_sweep.sh   # paired fp16-mlx + int4-mlx serial runs
+```
+
+The sweep writes MLX rows into the same [`results/ablations.csv`](results/ablations.csv) for apples-to-apples comparison with the pytorch-MPS int4 row from Phase 5B. The framing of the question is what makes this a valuable ablation even before the numbers land: *"same model, same quant, different runtime — is the gap platform or implementation?"* Whatever the answer, it closes the Phase 3D hypothesis.
+
+### Phase 6B — container + Kubernetes scaffolding
+
+The engine is MPS-native by design; Linux containers cannot reach MPS. Phase 6B ships a **CPU-only container and a full K8s manifest set** not to serve in production, but to demonstrate that the packaging, observability wiring, and orchestration layer exist and are reviewable. See [`deploy/README.md`](deploy/README.md) for the full writeup.
+
+What's there:
+
+- **[`Dockerfile`](Dockerfile)** — multi-stage, CPU-only PyTorch wheels from the official pytorch.org CPU index. Non-root uid, `/health` healthcheck, `serve` as the default entrypoint.
+- **[`docker-compose.yml`](docker-compose.yml)** — full local stack: nanoserve container + Prometheus + Grafana, with the same provisioning files the brew-based `make observe` uses (the grafana provisioning YAML's `$NANOSERVE_DASHBOARDS_PATH` env-var expansion makes both targets work from one file).
+- **[`deploy/k8s/`](deploy/k8s/)** — namespace, ConfigMap (engine env vars), Deployment (non-root, startup + liveness + readiness probes, resource requests/limits, emptyDir HF weight cache, pod-annotation Prometheus scrape), Service (ClusterIP, both `http` and `metrics` ports), HPA (v2 API, CPU-based, conservative scale-down so a weight-loading pod doesn't get killed mid-load), ServiceMonitor (Prometheus-Operator CRD, optional). All wired into a `kustomization.yaml` entrypoint.
+
+Quick verification:
+
+```bash
+make docker-up           # api + prom + grafana on ports 8000 / 9090 / 3000
+make k8s-render          # prints the full manifest set; no cluster required
+make k8s-apply           # applies the stack; requires a running cluster
+```
+
+Honest framing in [`deploy/README.md`](deploy/README.md): CPU-only means ~1–2 tok/s inside the container, which is why the canonical serving path is still `make serve` on the Mac. The Docker + K8s work exists to show the packaging and orchestration axis, not to replace the direct MPS path.
 
 ### How to read a row
 
