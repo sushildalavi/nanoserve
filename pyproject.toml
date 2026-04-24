@@ -29,6 +29,9 @@ dev = [
     "pytest-asyncio>=0.24",
     "ruff>=0.6",
 ]
+eval = [
+    "datasets>=3.0",
+]
 
 [project.scripts]
 nanoserve = "nanoserve.cli:app"
