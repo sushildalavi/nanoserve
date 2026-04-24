@@ -1,1 +1,4 @@
 timestamp,model,quant_mode,device,ppl,ppl_corpus,ppl_tokens,hs_accuracy,hs_n,hs_source,load_seconds,ppl_seconds,hs_seconds,torch_version,host
+2026-04-24T16:29:16Z,TinyLlama-1.1B-Chat-v1.0,fp16,mps,6.8695,wikitext-2-val-slice,21550,0.5800,100,hellaswag-val,4.93,45.79,32.67,2.8.0,Sushils-MacBook-Air.local
+2026-04-24T16:32:27Z,TinyLlama-1.1B-Chat-v1.0,int8,mps,6.8702,wikitext-2-val-slice,21550,0.5800,100,hellaswag-val,4.98,66.90,118.50,2.8.0,Sushils-MacBook-Air.local
+2026-04-24T16:39:02Z,TinyLlama-1.1B-Chat-v1.0,int4,mps,9.2494,wikitext-2-val-slice,21550,0.5200,100,hellaswag-val,5.20,106.77,282.74,2.8.0,Sushils-MacBook-Air.local
