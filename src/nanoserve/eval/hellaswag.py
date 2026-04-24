@@ -18,6 +18,7 @@ points below fp16, not to reach the published TinyLlama number.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 import torch
@@ -194,26 +195,37 @@ def load_items(prefer_hellaswag: bool = True, max_items: int = 100) -> list[HSIt
 
 @torch.inference_mode()
 def _score_ending_nll(model, tokenizer, ctx: str, ending: str, device) -> float:
-    """mean token NLL of `ending` conditioned on `ctx`, in nats/token."""
-    # tokenize context alone to know where the ending starts
+    """mean token NLL of `ending` conditioned on `ctx`, in nats/token.
+
+    tokenizes ctx and ending separately then concatenates the ids, so BPE
+    merges across the ctx/ending boundary can't silently move the split
+    point (which would happen if we tokenized `ctx + " " + ending` as one
+    string and trusted `ctx_ids` to be a prefix of the full encoding).
+
+    the leading-space convention for the ending ("roll a space into the
+    first ending token") matches how lm-evaluation-harness scores
+    completion tasks on llama-family tokenizers.
+    """
     ctx_ids = tokenizer(ctx, return_tensors="pt", add_special_tokens=True).input_ids
-    full_ids = tokenizer(ctx + " " + ending, return_tensors="pt", add_special_tokens=True).input_ids
-    full_ids = full_ids.to(device)
+    end_ids = tokenizer(
+        " " + ending, return_tensors="pt", add_special_tokens=False
+    ).input_ids
+    if end_ids.shape[1] == 0:
+        return float("inf")
+    input_ids = torch.cat([ctx_ids, end_ids], dim=1).to(device)
 
     ctx_len = ctx_ids.shape[1]
-    total_len = full_ids.shape[1]
-    ending_len = total_len - ctx_len
-    if ending_len <= 0:
-        return float("inf")
-
-    # mask out context positions so loss comes from the ending only
-    labels = full_ids.clone()
+    # mask out context positions so loss comes from the ending only.
+    labels = input_ids.clone()
     labels[:, :ctx_len] = -100
-    out = model(full_ids, labels=labels)
-    # HF shifts internally; out.loss is already mean NLL over valid
-    # ending positions (ending_len - 1 of them). we only need the mean
-    # to rank endings, so return the loss directly.
-    return out.loss.item()
+    out = model(input_ids, labels=labels)
+    # out.loss is mean NLL over (ending_len - 1 + 1 ctx handoff) shift
+    # positions where label != -100. for ranking endings we only need the
+    # mean, so return it directly. NaN guard for pathological endings.
+    loss = out.loss.item()
+    if not math.isfinite(loss):
+        return float("inf")
+    return loss
 
 
 @torch.inference_mode()
