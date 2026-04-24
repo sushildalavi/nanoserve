@@ -344,17 +344,21 @@ The engine phases (1–4 and 5B) are all about speed. Phase 5C adds the quality 
 
 **Measured (M3 Air, TinyLlama-1.1B-Chat-v1.0, wikitext-2 validation slice with 21,550 tokens, HellaSwag validation n=100):**
 
-| quant | perplexity (wikitext-2) | HellaSwag acc | Δ ppl vs fp16 | Δ accuracy |
-|-------|-------------------------|---------------|---------------|------------|
-| fp16  | 6.870                   | 0.580         | —             | —          |
-| int8  | 6.870                   | 0.580         | **+0.01%**    | 0          |
-| int4  | 9.249                   | 0.520         | **+35%**      | **-6 pts** |
+| runtime       | quant | perplexity | HellaSwag acc | Δ ppl vs fp16 | Δ accuracy |
+|---------------|-------|------------|---------------|---------------|------------|
+| pytorch-MPS   | fp16  | 6.870      | 0.580         | —             | —          |
+| pytorch-MPS   | int8  | 6.870      | 0.580         | **+0.01%**    | 0          |
+| pytorch-MPS   | int4  | 9.249      | 0.520         | **+35%**      | **-6 pts** |
+| **MLX**       | fp16  | **6.869**  | **0.580**     | ~0            | 0          |
+| **MLX**       | int4  | **7.255**  | **0.580**     | **+5.6%**     | **0**      |
 
-Two takeaways:
+Three findings:
 
-1. **int8 weight-only quant is essentially lossless on quality.** PPL delta is 0.0007 (seven parts in ten thousand); HellaSwag accuracy is identical. Combined with the Phase 3 speed numbers, this paints a clear picture: on MPS, int8 is a **pure memory win** — no speed benefit, no quality cost.
+1. **int8 weight-only on pytorch is lossless.** PPL delta 0.0007; HellaSwag identical. On MPS this is a pure memory win — no speed benefit, no quality cost.
 
-2. **int4 has a real quality cost.** +35% perplexity and -10% relative on HellaSwag (from 58% to 52%; random is 25%). The model still works, but it's measurably worse. Combined with the Phase 5B speed numbers, int4 on pytorch-MPS is **net-negative on every axis except memory**. The narrow scenario where it pays: "I have less than 655 MB to spend on weights and can tolerate both the latency and the quality hit." Academically interesting, production-unreasonable at this scale.
+2. **int4 on pytorch has a real quality cost** (+35% PPL, -6 HS points). Combined with the Phase 5B speed numbers, pytorch-MPS int4 is **net-negative on every axis except memory** — not worth it in practice at TinyLlama scale.
+
+3. **int4 on MLX is much better quality** (+5.6% PPL, zero HellaSwag drop). Same model, same bit-width, different runtime. The pytorch-MPS hand-rolled int4 path uses per-row symmetric quant with no group structure; MLX's `nn.quantize(group_size=64, bits=4)` uses per-group scales (64 weights share one fp16 scale), which preserves more signal. Combined with Phase 6A's **82× decode speedup**, MLX int4 turns from "avoid" into "default" on this platform: **faster than fp16, smaller weights, and only 5.6% PPL inflation.** That's the actual production recommendation coming out of this project.
 
 The runner ([`src/nanoserve/eval/runner.py`](src/nanoserve/eval/runner.py)) loads each quant mode, scores, frees the model in a `finally` block (so a single bad quant mode can't OOM the whole sweep), and appends a row with full environment metadata: torch version, host, corpus source, wall-clock timings. CLI: `nanoserve eval all --quant fp16,int8,int4` (default) or `--offline` to force the fixture path.
 
