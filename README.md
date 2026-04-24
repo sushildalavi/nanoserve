@@ -24,8 +24,15 @@ Phase 1 (measurement first). Benchmark harness, load generator, and baselines la
 - [x] phase 3C: prefix cache (LCP-matching with on-the-fly cache slicing) + L5-prefix parity + sweep
 - [x] phase 3D: torch 2.8 + torchao 0.9 vs hand-rolled int8 — confirms platform constraint (no native int8 matmul on MPS)
 - [x] phase 4: openai-compatible streaming api (FastAPI + SSE) + prometheus metrics + serve CLI + 6 integration tests
-- [ ] MLX port: only remaining option to make int8 actually beat fp16 on Apple Silicon
-- [ ] true paged KV with custom Metal attention kernels (vLLM territory; deferred — not implementable in pure pytorch)
+- [x] phase 5A: live grafana dashboard provisioned from `ops/` (4 rows, 12 panels)
+- [x] phase 5B: int4 packed weight-only quant + L4-int4 parity + sweep script
+- [x] phase 5C: quality eval harness (perplexity + hellaswag-mini) with `results/eval.csv`
+
+### Explicitly out of scope (documented, not attempted)
+
+- **True paged KV with custom Metal attention kernels** — vLLM territory. Not implementable in pure pytorch on MPS; would require Metal kernel work. Prefix caching (phase 3C) is the implementable subset we ship in its place. This also means the original 3-ablation plan (batching off / paging off / prefix cache off) ships as **2 ablations** (batching off, prefix cache off); the paging-off row is listed as N/A.
+- **MLX port** — the only path to make int8/int4 actually beat fp16 on Apple Silicon (MLX has native Metal int8/int4 matmul kernels; pytorch-MPS does not). Clean pivot, multi-week scope. Deferred indefinitely; the phase 3D writeup makes the case that the remaining gap is platform-level, not a bug.
+- Kubernetes / Ray Serve / gRPC / auth / multi-tenancy.
 
 ## Quickstart
 
@@ -36,6 +43,8 @@ make baseline-hf
 make baseline-llamacpp
 make parity
 make serve            # starts the openai-compatible api on :8000
+make observe          # in another terminal: local prometheus + grafana
+make eval             # perplexity + hellaswag across fp16/int8/int4 (writes results/eval.csv)
 ```
 
 Results land in `results/ablations.csv` (headline table) and `results/runs/*.json` (per-run dumps with full config, env, and per-request records).
@@ -63,6 +72,19 @@ curl localhost:8000/metrics | grep nanoserve_
 ```
 
 The same engine + scheduler + prefix cache + INT8 path the bench harness drives is what the API serves — there is no second implementation. Phase 1 designed the `EngineService` interface specifically so the API and the bench could share an engine.
+
+### View the live dashboard
+
+Once the API is running, spin up a local prometheus + grafana pair to watch the metrics:
+
+```bash
+brew install prometheus grafana   # one-time
+make observe                      # runs both in the foreground, ctrl-c stops them
+# open http://localhost:3000  (admin / admin)
+# dashboard: http://localhost:3000/d/nanoserve/nanoserve
+```
+
+The dashboard auto-provisions from [`ops/grafana/dashboards/nanoserve.json`](ops/grafana/dashboards/nanoserve.json). Four rows — serving (RPS, error rate, active seqs, batched-forward fraction), latency (TTFT / TPOT / e2e at p50/p95/p99), throughput (input vs output token rates, status breakdown), and the prefix cache (hit rate, size, hits-vs-misses). Full ops README at [`ops/README.md`](ops/README.md).
 
 ## The ablation table
 
@@ -280,6 +302,40 @@ Plus 8 unit tests for the metrics module (counter increments, histogram bucket e
 
 Raw artifacts live in [`results/ablations.csv`](results/ablations.csv) and [`results/runs/`](results/runs/) (full per-request records + env).
 
+### Phase 5A — live Grafana dashboard
+
+Phase 4 shipped the Prometheus metrics; Phase 5A adds the dashboard so the numbers are actually visible under load. The dashboard is checked in at [`ops/grafana/dashboards/nanoserve.json`](ops/grafana/dashboards/nanoserve.json) and auto-provisions via [`ops/grafana/provisioning/`](ops/grafana/provisioning/). Four rows, 12 panels:
+
+- **serving** — RPS (stat), error rate (thresholded stat), active seqs (stat), batched-forward fraction (gauge with green/yellow/red thresholds)
+- **latency** — TTFT / TPOT / e2e timeseries, each with p50 / p95 / p99 derived from the histograms via `histogram_quantile`
+- **throughput** — input vs output token rates (timeseries) and a stacked requests-by-status panel
+- **prefix cache** — hit rate, cache size, and a hits-vs-misses timeseries for watching warmup behavior
+
+`make observe` starts prometheus (scrape interval 5s) and grafana locally, both pointed at [`ops/prometheus.yml`](ops/prometheus.yml) and the provisioning dir above. Admin credentials default to `admin` / `admin`. Data persists under `ops/data/` (git-ignored). The ops README at [`ops/README.md`](ops/README.md) is the one-page operating guide.
+
+### Phase 5B — INT4 packed weight-only quantization
+
+The Phase 3 arc concluded that INT8 weight-only quant on MPS pays a dequant tax that exceeds the memory-bandwidth savings at TinyLlama scale. Phase 5B adds the INT4 variant ([`src/nanoserve/engine/quant_int4.py`](src/nanoserve/engine/quant_int4.py)) primarily to test whether a steeper memory cut changes the answer — and secondarily to have a quant-quality ablation for the eval harness to score.
+
+**The packed representation.** Per-row symmetric scale like the INT8 path, but the quantization codomain is signed int4 (values in `[-8, 7]`, scale = absmax / 7). Two int4 values fit in one byte — low nibble for the even column, high nibble for the odd. Storage shrinks 4× vs fp16 (TinyLlama 1.1B weights: ~2 GB → ~536 MB). Odd `in_features` are padded with a zero column before packing and stripped on unpack. Correctness is verified by:
+
+- **9 unit tests** in [`tests/test_quant_int4.py`](tests/test_quant_int4.py) covering pack/unpack round-trips (even + odd widths), boundary values (`-8`, `7`), zero-row stability, forward-pass error bounds, and whole-model replacement byte accounting
+- **L4-quant-int4 parity gate** in [`tests/test_engine_parity_l4_quant_int4.py`](tests/test_engine_parity_l4_quant_int4.py) — INT4 vs fp16 greedy outputs must match on the first 2 tokens for at least 3 of 5 test prompts. Deliberately looser than the int8 gate because int4 rounding is ~9× more aggressive; the point is to catch catastrophic breakage, not demand exact parity.
+
+Run the sweep with [`scripts/run_phase5b_sweep.sh`](scripts/run_phase5b_sweep.sh) — serial c=1 plus paired fcfs/synchronized continuous at poisson λ=2, matching the Phase 3B shape so the INT4 row slots into the existing ablation table.
+
+### Phase 5C — quality eval harness
+
+The engine phases (1–4 and 5B) are all about speed. Phase 5C adds the quality axis so we can honestly say *"int8/int4 slow down the serving loop on this hardware, but they don't destroy the model."* Two metrics per quant mode, one CSV row per run, committed at [`results/eval.csv`](results/eval.csv).
+
+**Perplexity** ([`src/nanoserve/eval/perplexity.py`](src/nanoserve/eval/perplexity.py)): sliding-window PPL on wikitext-2 validation (via `datasets`) with an in-repo fixture fallback at [`prompts/eval/ppl_fixture.txt`](prompts/eval/ppl_fixture.txt) so the eval runs offline. 512-token window, 256-token stride, overlap tokens masked out of the loss so each position contributes exactly once.
+
+**HellaSwag-mini** ([`src/nanoserve/eval/hellaswag.py`](src/nanoserve/eval/hellaswag.py)): LM-scoring on Rowan/hellaswag validation (100 items by default), fallback to a 12-item in-repo cloze fixture. For each item, compute mean NLL of each of the 4 endings conditioned on the context; argmin = prediction; compare to gold label. Same recipe as `lm-evaluation-harness`, stripped down to the essentials.
+
+**What the eval is for.** TinyLlama at 1.1B is small enough that absolute HellaSwag scores sit in the mid-30s (near chance 25%), so the eval is not a leaderboard entry. It's an ablation tool: run `make eval` before and after a quant change and compare the *delta* — fp16 vs int8 vs int4 — on the same corpus. The pass criterion is "int8 and int4 stay within a documented tolerance of fp16 on both metrics"; large drops would flag a genuine quality cliff.
+
+The runner ([`src/nanoserve/eval/runner.py`](src/nanoserve/eval/runner.py)) loads each quant mode, scores, unloads the model (to keep peak memory bounded), and appends a row with full environment metadata: torch version, host, corpus source, wall-clock timings. CLI: `nanoserve eval all --quant fp16,int8,int4` (default) or `--offline` to force the fixture path.
+
 ### How to read a row
 
 - **workload `closed-loop c=N`** — N concurrent clients, each fires the next request as soon as the current one finishes. Measures raw serving capacity with no queuing effects.
@@ -299,11 +355,15 @@ A new row is added every time a technique is toggled on or off. The columns `bat
 src/nanoserve/
   bench/      metrics, workload generator, runner, report writer
   baselines/  hf-mps and llama.cpp backends behind a common interface
-  cli.py      entrypoints for `baseline` and `bench` commands
-scripts/      model download + parity test
-prompts/      fixed prompt set (seeded, versioned)
-results/      ablations.csv + per-run json dumps
-tests/        unit tests for metrics
+  engine/     scheduler, prefix cache, int8/int4/torchao quant, service
+  server/     fastapi app + prometheus metrics
+  eval/       perplexity + hellaswag scorers + runner
+  cli.py      entrypoints for baseline / bench / serve / eval commands
+ops/          prometheus + grafana provisioning + observe.sh
+scripts/      model download + parity + per-phase sweep scripts
+prompts/      fixed bench prompts + eval fixture corpora
+results/      ablations.csv, eval.csv, per-run json dumps
+tests/        parity gates, unit tests, api integration tests
 ```
 
 ## Model
