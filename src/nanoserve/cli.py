@@ -172,10 +172,13 @@ def eval_ppl(quant: str = "fp16", offline: bool = False):
     from nanoserve.eval.perplexity import compute_perplexity, load_corpus, load_model
 
     device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
-    corpus = load_corpus(prefer_wikitext=not offline)
+    corpus, source = load_corpus(prefer_wikitext=not offline)
     model, tok = load_model(quant, TINYLLAMA_HF.path, device)
     r = compute_perplexity(model, tok, corpus, device)
-    typer.echo(f"ppl={r['ppl']:.4f} nll={r['nll']:.4f} tokens={r['tokens']}")
+    typer.echo(
+        f"ppl={r['ppl']:.4f} nll={r['nll']:.4f} tokens={r['tokens']} "
+        f"corpus={source}"
+    )
 
 
 if __name__ == "__main__":

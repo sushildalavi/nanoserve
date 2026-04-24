@@ -63,10 +63,10 @@ def run_eval(
     result dicts. optionally appends each row to `results/eval.csv`.
     """
     device = _pick_device()
-    corpus = load_corpus(prefer_wikitext=prefer_wikitext)
-    ppl_corpus_name = "wikitext-2-val-slice" if prefer_wikitext and len(corpus) > 20_000 else "fixture"
-    hs_items = load_items(prefer_hellaswag=prefer_hellaswag, max_items=max_hs_items)
-    hs_source = "hellaswag-val" if prefer_hellaswag and len(hs_items) > 12 else "cloze-fixture"
+    corpus, ppl_corpus_name = load_corpus(prefer_wikitext=prefer_wikitext)
+    hs_items, hs_source = load_items(
+        prefer_hellaswag=prefer_hellaswag, max_items=max_hs_items
+    )
 
     if append_csv:
         Path(EVAL_CSV).parent.mkdir(parents=True, exist_ok=True)
@@ -96,7 +96,10 @@ def run_eval(
             t_hs = time.perf_counter() - t0
 
             row = {
-                "timestamp": dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "timestamp": dt.datetime.now(dt.UTC)
+                    .replace(microsecond=0)
+                    .isoformat()
+                    .replace("+00:00", "Z"),
                 "model": Path(model_path).name,
                 "quant_mode": mode,
                 "device": str(device),

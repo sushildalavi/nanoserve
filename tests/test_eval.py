@@ -15,14 +15,16 @@ def test_ppl_fixture_exists_and_is_nontrivial():
 
 
 def test_load_corpus_offline_returns_fixture_text():
-    text = load_corpus(prefer_wikitext=False)
+    text, source = load_corpus(prefer_wikitext=False)
+    assert source == "fixture"
     assert isinstance(text, str)
     assert len(text) > 2000
     assert "transistor" in text or "computer" in text
 
 
 def test_load_items_offline_returns_fixture():
-    items = load_items(prefer_hellaswag=False)
+    items, source = load_items(prefer_hellaswag=False)
+    assert source == "cloze-fixture"
     assert len(items) == len(FIXTURE_ITEMS)
     for it in items:
         assert isinstance(it, HSItem)

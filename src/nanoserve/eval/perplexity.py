@@ -26,12 +26,13 @@ from nanoserve.config import REPO_ROOT
 FIXTURE_PATH = REPO_ROOT / "prompts" / "eval" / "ppl_fixture.txt"
 
 
-def load_corpus(prefer_wikitext: bool = True, max_chars: int = 80_000) -> str:
-    """return the eval text as a single string.
-
-    if `prefer_wikitext=True` and `datasets` is installed, pulls the
-    first `max_chars` of wikitext-2-raw-v1 validation. otherwise returns
-    the local fixture.
+def load_corpus(prefer_wikitext: bool = True, max_chars: int = 80_000) -> tuple[str, str]:
+    """return (text, source) where source is "wikitext-2-val-slice" if
+    huggingface datasets provided wikitext, or "fixture" if we fell back
+    to `prompts/eval/ppl_fixture.txt`. callers that just need the text
+    can unpack and ignore source; the source is surfaced in eval.csv so
+    runs against different corpora don't get compared as if they were
+    the same benchmark.
     """
     if prefer_wikitext:
         try:
@@ -48,12 +49,12 @@ def load_corpus(prefer_wikitext: bool = True, max_chars: int = 80_000) -> str:
                 if total >= max_chars:
                     break
             if chunks:
-                return "\n".join(chunks)[:max_chars]
+                return ("\n".join(chunks)[:max_chars], "wikitext-2-val-slice")
         except Exception:
             pass  # fall through to fixture
 
     text = FIXTURE_PATH.read_text(encoding="utf-8")
-    return text
+    return (text, "fixture")
 
 
 @torch.inference_mode()

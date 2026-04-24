@@ -157,9 +157,12 @@ class HSItem:
     label: int
 
 
-def load_items(prefer_hellaswag: bool = True, max_items: int = 100) -> list[HSItem]:
-    """return a list of HSItems. tries HellaSwag validation first, falls
-    back to the built-in cloze fixture if datasets is unavailable.
+def load_items(
+    prefer_hellaswag: bool = True, max_items: int = 100
+) -> tuple[list[HSItem], str]:
+    """return (items, source) where source is "hellaswag-val" or
+    "cloze-fixture". explicit source reporting avoids the ambiguity of
+    "we tried hellaswag and got a short list" vs "we fell through".
     """
     if prefer_hellaswag:
         try:
@@ -186,11 +189,11 @@ def load_items(prefer_hellaswag: bool = True, max_items: int = 100) -> list[HSIt
                 if len(items) >= max_items:
                     break
             if items:
-                return items
+                return (items, "hellaswag-val")
         except Exception:
             pass  # fall through
 
-    return [HSItem(**d) for d in FIXTURE_ITEMS]
+    return ([HSItem(**d) for d in FIXTURE_ITEMS], "cloze-fixture")
 
 
 @torch.inference_mode()
