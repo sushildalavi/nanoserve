@@ -104,6 +104,8 @@ This is the whole point of the project. Every technique is added with its on/off
 | nanoserve  | fp16   | on       | poisson λ=4      | 0.35 | 41 s       | 93 s     | 101 s    | 6.9          | 3.88      |
 | nanoserve  | **int8** | off    | closed-loop c=1  | 0.13 | 271 ms     | 451 ms   | 9.6 s    | 5.5          | 1.00      |
 | nanoserve  | **int8** | on     | closed-loop c=4  | 0.13 | 897 ms     | 1.5 s    | 33.5 s   | 1.5          | 3.23      |
+| nanoserve  | **int4** | off    | closed-loop c=1  | 0.02 | 661 ms     | 883 ms   | 57.3 s   | 1.7          | 1.00      |
+| nanoserve  | **int4** | on     | poisson λ=2      | 0.07 | 174 s      | 305 s    | 336 s    | 1.6          | 3.33      |
 
 **Phase 3B paired sweep — fcfs vs synchronized admission, fp16 + int8 (poisson λ=2, c=4, n=20, max_new=32):**
 
@@ -322,7 +324,24 @@ The Phase 3 arc concluded that INT8 weight-only quant on MPS pays a dequant tax 
 - **9 unit tests** in [`tests/test_quant_int4.py`](tests/test_quant_int4.py) covering pack/unpack round-trips (even + odd widths), boundary values (`-8`, `7`), zero-row stability, forward-pass error bounds, and whole-model replacement byte accounting
 - **L4-quant-int4 parity gate** in [`tests/test_engine_parity_l4_quant_int4.py`](tests/test_engine_parity_l4_quant_int4.py) — INT4 vs fp16 greedy outputs must match on the first 2 tokens for at least 3 of 5 test prompts. Deliberately looser than the int8 gate because int4 rounding is ~9× more aggressive; the point is to catch catastrophic breakage, not demand exact parity.
 
-Run the sweep with [`scripts/run_phase5b_sweep.sh`](scripts/run_phase5b_sweep.sh) — serial c=1 plus paired fcfs/synchronized continuous at poisson λ=2, matching the Phase 3B shape so the INT4 row slots into the existing ablation table.
+**The measured sweep (M3 Air, TinyLlama-1.1B, n=30, max_new=64):**
+
+| quant | admission | workload            | rps   | p50 TTFT | decode tok/s | avg batch | batched_forward_frac | forward p50 | mem peak |
+|-------|-----------|---------------------|-------|----------|--------------|-----------|----------------------|-------------|----------|
+| fp16  | —         | serial c=1          | 0.866 | 63 ms    | 37.6         | 1.00      | —                    | 33.7 ms     | 1556 MB  |
+| int4  | —         | serial c=1          | 0.022 | 661 ms   | 1.67         | 1.00      | —                    | 636 ms      | **262 MB**   |
+| int4  | fcfs      | poisson λ=2 c=4     | 0.027 | 481 s    | 0.52         | 3.74      | **0.036**            | 636 ms      | 462 MB   |
+| int4  | **synchronized** | poisson λ=2 c=4 | **0.073** | 174 s | 1.61     | 3.33      | **0.778**            | 708 ms      | 655 MB   |
+
+Three results worth calling out:
+
+1. **The Phase 3B finding replicates at int4.** `fcfs → synchronized` lifts rps 0.027 → 0.073 (+170%) and `batched_forward_frac` from 0.036 to 0.778. The admission-policy bug that blocked batching under Poisson for int8 does the same thing at int4 — confirming the scheduler fix is orthogonal to quantization.
+
+2. **int4 is still ~11× slower than fp16 on rps.** This is the platform tax from the Phase 3D diagnosis: no native int4 matmul on MPS → dequant-to-fp16-then-matmul on every forward. Forward p50 goes from 34 ms (fp16) to 636–708 ms (int4), a ~20× per-step slowdown that no amount of scheduler work can fix without MLX.
+
+3. **Memory is the real win.** Serial int4 peaks at **262 MB** vs fp16's **1556 MB** — a **6× reduction**. Batched int4 peaks at 655 MB (still 2.4× less). At TinyLlama scale this is mostly academic; at 7B+ it's the difference between fitting and not fitting on a 16 GB Air.
+
+Run the sweep yourself with [`scripts/run_phase5b_sweep.sh`](scripts/run_phase5b_sweep.sh) — serial c=1 plus paired fcfs/synchronized continuous at Poisson λ=2.
 
 ### Phase 5C — quality eval harness
 
@@ -332,9 +351,23 @@ The engine phases (1–4 and 5B) are all about speed. Phase 5C adds the quality 
 
 **HellaSwag-mini** ([`src/nanoserve/eval/hellaswag.py`](src/nanoserve/eval/hellaswag.py)): LM-scoring on Rowan/hellaswag validation (100 items by default), fallback to a 12-item in-repo cloze fixture. For each item, compute mean NLL of each of the 4 endings conditioned on the context; argmin = prediction; compare to gold label. Same recipe as `lm-evaluation-harness`, stripped down to the essentials.
 
-**What the eval is for.** TinyLlama at 1.1B is small enough that absolute HellaSwag scores sit in the mid-30s (near chance 25%), so the eval is not a leaderboard entry. It's an ablation tool: run `make eval` before and after a quant change and compare the *delta* — fp16 vs int8 vs int4 — on the same corpus. The pass criterion is "int8 and int4 stay within a documented tolerance of fp16 on both metrics"; large drops would flag a genuine quality cliff.
+**What the eval is for.** Two axes (perplexity + HellaSwag accuracy) over the three quant modes. The pass criterion is "int8 and int4 stay within a documented tolerance of fp16"; a large drop would flag a quality cliff the speed/memory numbers on their own couldn't reveal.
 
-The runner ([`src/nanoserve/eval/runner.py`](src/nanoserve/eval/runner.py)) loads each quant mode, scores, unloads the model (to keep peak memory bounded), and appends a row with full environment metadata: torch version, host, corpus source, wall-clock timings. CLI: `nanoserve eval all --quant fp16,int8,int4` (default) or `--offline` to force the fixture path.
+**Measured (M3 Air, TinyLlama-1.1B-Chat-v1.0, wikitext-2 validation slice with 21,550 tokens, HellaSwag validation n=100):**
+
+| quant | perplexity (wikitext-2) | HellaSwag acc | Δ ppl vs fp16 | Δ accuracy |
+|-------|-------------------------|---------------|---------------|------------|
+| fp16  | 6.870                   | 0.580         | —             | —          |
+| int8  | 6.870                   | 0.580         | **+0.01%**    | 0          |
+| int4  | 9.249                   | 0.520         | **+35%**      | **-6 pts** |
+
+Two takeaways:
+
+1. **int8 weight-only quant is essentially lossless on quality.** PPL delta is 0.0007 (seven parts in ten thousand); HellaSwag accuracy is identical. Combined with the Phase 3 speed numbers, this paints a clear picture: on MPS, int8 is a **pure memory win** — no speed benefit, no quality cost.
+
+2. **int4 has a real quality cost.** +35% perplexity and -10% relative on HellaSwag (from 58% to 52%; random is 25%). The model still works, but it's measurably worse. Combined with the Phase 5B speed numbers, int4 on pytorch-MPS is **net-negative on every axis except memory**. The narrow scenario where it pays: "I have less than 655 MB to spend on weights and can tolerate both the latency and the quality hit." Academically interesting, production-unreasonable at this scale.
+
+The runner ([`src/nanoserve/eval/runner.py`](src/nanoserve/eval/runner.py)) loads each quant mode, scores, frees the model in a `finally` block (so a single bad quant mode can't OOM the whole sweep), and appends a row with full environment metadata: torch version, host, corpus source, wall-clock timings. CLI: `nanoserve eval all --quant fp16,int8,int4` (default) or `--offline` to force the fixture path.
 
 **Test-suite state after Phase 5:** 84 tests collected. Phase 5 added 15 (9 int4 pack/unpack unit tests, L4-quant-int4 engine parity gate, 5 offline eval-harness tests). Non-MPS subset (67 tests: metrics, workload, scheduler, prefix cache, int4 quant, eval fixtures) runs in under 1s; MPS-only subset (17 tests: L1/L2/L3/L3-var/L4/L4-int4/L5 parity + EOS + server integration) runs on the M3 Air on the user's side.
 
