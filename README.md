@@ -4,34 +4,21 @@ An OpenAI-compatible LLM serving engine built from scratch, with continuous batc
 
 Runs on an M3 MacBook Air. No CUDA, no cloud, no Kubernetes. The interesting parts are the scheduler, the KV cache layout, and the numbers under load.
 
-## Status
+## What's in the box
 
-Phase 1 (measurement first). Benchmark harness, load generator, and baselines land before any engine code, so every technique that follows has a pre-recorded number to beat.
+- OpenAI-compatible streaming API (FastAPI + SSE) — `POST /v1/chat/completions`, stream and non-stream.
+- Continuous batching scheduler with FCFS + synchronized admission policies and mixed-length batched forward (left-padding + attention masks, EOS retirement).
+- Longest-common-prefix KV reuse with on-the-fly cache slicing.
+- Hand-rolled INT8 and packed INT4 weight-only quantization paths; torchao INT8 comparison.
+- Prometheus metrics + a 12-panel Grafana dashboard provisioned from `ops/`.
+- Benchmark harness (closed-loop + Poisson open-loop) with p50/p95/p99, TTFT, TPOT, decode tok/s, and a per-step `batched_forward_frac` counter.
+- Quality eval harness (perplexity on wikitext-2 + HellaSwag-100) with `make eval`.
+- Six token-exact greedy parity gates (L1, L2, L3, L3-var, L4-int8, L4-int4, L5-prefix) plus `EOS retirement` + scheduler + prefix-cache unit tests.
 
-- [x] repo scaffold, pyproject, makefile
-- [x] metrics (p50/p95/p99, TTFT, TPOT, decode tok/s) with tests
-- [x] workload generator (closed-loop + poisson open-loop)
-- [x] json + csv report writer
-- [x] async runner
-- [x] hf-mps baseline (naive, one at a time)
-- [x] llama.cpp baseline (Q8_0 + Q4_K_M, Metal)
-- [x] parity test scaffold
-- [x] baseline numbers filled in `results/ablations.csv`
-- [x] phase 2A: fixed-shape continuous batching scheduler + L1/L2/L3 parity gates
-- [x] phase 2B: mixed-length (left-padding + masks), EOS retirement, L3-var parity, Poisson sweep λ=1/2/4
-- [x] phase 3A: hand-rolled INT8 weight-only quant + L4-quant parity + diagnosis
-- [x] phase 3B: forward/overhead timing + synchronized admission policy + paired sweep (fp16+int8 each)
-- [x] phase 3C: prefix cache (LCP-matching with on-the-fly cache slicing) + L5-prefix parity + sweep
-- [x] phase 3D: torch 2.8 + torchao 0.9 vs hand-rolled int8 — confirms platform constraint (no native int8 matmul on MPS)
-- [x] phase 4: openai-compatible streaming api (FastAPI + SSE) + prometheus metrics + serve CLI + 6 integration tests
-- [x] phase 5A: live grafana dashboard provisioned from `ops/` (4 rows, 12 panels)
-- [x] phase 5B: int4 packed weight-only quant + L4-int4 parity + sweep script
-- [x] phase 5C: quality eval harness (perplexity + hellaswag-mini) with `results/eval.csv`
+## Not implemented (and why)
 
-### Explicitly out of scope (documented, not attempted)
-
-- **True paged KV with custom Metal attention kernels** — vLLM territory. Not implementable in pure pytorch on MPS; would require Metal kernel work. Prefix caching (phase 3C) is the implementable subset we ship in its place. This also means the original 3-ablation plan (batching off / paging off / prefix cache off) ships as **2 ablations** (batching off, prefix cache off); the paging-off row is listed as N/A.
-- **MLX port** — the only path to make int8/int4 actually beat fp16 on Apple Silicon (MLX has native Metal int8/int4 matmul kernels; pytorch-MPS does not). Clean pivot, multi-week scope. Deferred indefinitely; the phase 3D writeup makes the case that the remaining gap is platform-level, not a bug.
+- **True paged KV with custom Metal attention kernels** — vLLM territory. Not implementable in pure PyTorch on MPS; would require Metal kernel work. Prefix caching is the implementable subset shipped in its place.
+- **MLX port** — the only path to make int8/int4 actually beat fp16 on Apple Silicon (MLX has native Metal int8/int4 matmul; PyTorch-MPS does not). Clean pivot, multi-week scope. The Phase 3D write-up makes the case that the remaining gap is platform-level, not a bug.
 - Kubernetes / Ray Serve / gRPC / auth / multi-tenancy.
 
 ## Quickstart

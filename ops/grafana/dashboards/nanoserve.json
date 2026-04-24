@@ -78,7 +78,7 @@
       },
       "targets": [
         {
-          "expr": "sum(rate(nanoserve_requests_total{status=\"error\"}[5m])) / clamp_min(sum(rate(nanoserve_requests_total[5m])), 1e-9)",
+          "expr": "(sum(rate(nanoserve_requests_total{status=\"error\"}[5m])) / clamp_min(sum(rate(nanoserve_requests_total[5m])), 1e-9)) or on() vector(0)",
           "refId": "A",
           "legendFormat": "err"
         }
