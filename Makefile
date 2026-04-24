@@ -1,4 +1,4 @@
-.PHONY: help install dev-install fmt lint test clean models baseline-hf baseline-llamacpp bench parity
+.PHONY: help install dev-install fmt lint test clean models baseline-hf baseline-llamacpp bench parity serve observe eval
 
 PY ?= python3.11
 VENV ?= .venv
@@ -18,6 +18,8 @@ help:
 	@echo "  parity             run parity test across backends"
 	@echo "  bench              run full baseline sweep"
 	@echo "  serve              start the openai-compatible api server on :8000"
+	@echo "  observe            start local prometheus + grafana (brew) pointed at :8000/metrics"
+	@echo "  eval               run the quality eval harness (perplexity + hellaswag-mini)"
 
 $(VENV):
 	$(PY) -m venv $(VENV)
@@ -56,6 +58,12 @@ bench:
 
 serve:
 	$(PYV) -m nanoserve.cli serve --host 127.0.0.1 --port 8000
+
+observe:
+	bash ops/observe.sh
+
+eval:
+	$(PYV) -m nanoserve.cli eval all
 
 clean:
 	rm -rf build dist *.egg-info .ruff_cache .pytest_cache
