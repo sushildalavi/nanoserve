@@ -32,6 +32,10 @@ dev = [
 eval = [
     "datasets>=3.0",
 ]
+mlx = [
+    "mlx>=0.24",
+    "mlx-lm>=0.21",
+]
 
 [project.scripts]
 nanoserve = "nanoserve.cli:app"
