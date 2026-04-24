@@ -45,4 +45,5 @@ the dashboard auto-provisions from [`grafana/dashboards/nanoserve.json`](grafana
 - prometheus scrapes `127.0.0.1:8000/metrics` every 5s. if `make serve` isn't running, the nanoserve job goes red in the prom targets page — that's expected.
 - the gauges (`active_seqs`, `batched_forward_frac`, `prefix_cache_size`) refresh on each scrape via [`refresh_gauges_from_engine`](../src/nanoserve/server/metrics.py). they show point-in-time state, not accumulated values.
 - grafana + prometheus data live in `ops/data/` (git-ignored). delete that dir to reset.
-- admin credentials are set via env in `observe.sh` and default to `admin` / `admin`. rotate if you expose the port.
+- admin credentials are set via env in `observe.sh` and default to `admin` / `admin`. those env vars only take effect on grafana's *first* start (when the users table is seeded). after that, grafana's local db at `ops/data/grafana/grafana.db` is authoritative. to reset, `rm -rf ops/data/grafana/` — this also clears any dashboard edits made via the UI, which is usually what you want.
+- the first grafana boot will also pull a handful of default plugins into `ops/data/grafana/plugins/`. that's normal and those files are git-ignored.
