@@ -1,0 +1,345 @@
+{
+  "uid": "nanoserve",
+  "title": "nanoserve",
+  "tags": ["nanoserve", "llm"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5s",
+  "time": { "from": "now-15m", "to": "now" },
+  "editable": true,
+  "graphTooltip": 1,
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "type": "row",
+      "id": 100,
+      "title": "serving",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 1,
+      "title": "requests / sec",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "orientation": "auto",
+        "textMode": "auto",
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "decimals": 2,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(nanoserve_requests_total[1m]))",
+          "refId": "A",
+          "legendFormat": "rps"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 2,
+      "title": "error rate",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "none"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "decimals": 2,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red", "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(nanoserve_requests_total{status=\"error\"}[5m])) / clamp_min(sum(rate(nanoserve_requests_total[5m])), 1e-9)",
+          "refId": "A",
+          "legendFormat": "err"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 3,
+      "title": "active seqs",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 12, "y": 1, "w": 6, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nanoserve_active_seqs", "refId": "A", "legendFormat": "seqs" }
+      ]
+    },
+    {
+      "type": "gauge",
+      "id": 4,
+      "title": "batched forward fraction",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 18, "y": 1, "w": 6, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nanoserve_batched_forward_frac", "refId": "A", "legendFormat": "frac" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 101,
+      "title": "latency",
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 5,
+      "title": "TTFT p50 / p95 / p99",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 0, "y": 7, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": {
+            "drawStyle": "line",
+            "lineInterpolation": "linear",
+            "fillOpacity": 10,
+            "spanNulls": true
+          }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(nanoserve_ttft_seconds_bucket[1m])) by (le))", "refId": "A", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(nanoserve_ttft_seconds_bucket[1m])) by (le))", "refId": "B", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(nanoserve_ttft_seconds_bucket[1m])) by (le))", "refId": "C", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 6,
+      "title": "TPOT p50 / p95 / p99",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 8, "y": 7, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(nanoserve_tpot_seconds_bucket[1m])) by (le))", "refId": "A", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(nanoserve_tpot_seconds_bucket[1m])) by (le))", "refId": "B", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(nanoserve_tpot_seconds_bucket[1m])) by (le))", "refId": "C", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 7,
+      "title": "end-to-end p50 / p95 / p99",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 16, "y": 7, "w": 8, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum(rate(nanoserve_e2e_seconds_bucket[1m])) by (le))", "refId": "A", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum(rate(nanoserve_e2e_seconds_bucket[1m])) by (le))", "refId": "B", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum(rate(nanoserve_e2e_seconds_bucket[1m])) by (le))", "refId": "C", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 102,
+      "title": "throughput",
+      "gridPos": { "x": 0, "y": 15, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "timeseries",
+      "id": 8,
+      "title": "token rate (input vs output)",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "rate(nanoserve_input_tokens_total[1m])", "refId": "A", "legendFormat": "input tok/s" },
+        { "expr": "rate(nanoserve_output_tokens_total[1m])", "refId": "B", "legendFormat": "output tok/s" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 9,
+      "title": "requests by status",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 12, "y": 16, "w": 12, "h": 8 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "stacking": { "mode": "normal", "group": "A" }, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "sum by (status) (rate(nanoserve_requests_total[1m]))", "refId": "A", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "type": "row",
+      "id": 103,
+      "title": "prefix cache",
+      "gridPos": { "x": 0, "y": 24, "w": 24, "h": 1 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "type": "stat",
+      "id": 10,
+      "title": "hit rate (5m)",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 0, "y": 25, "w": 6, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min": 0,
+          "max": 1,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "yellow", "value": 0.3 },
+              { "color": "green", "value": 0.7 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr": "sum(rate(nanoserve_prefix_cache_hits_total[5m])) / clamp_min(sum(rate(nanoserve_prefix_cache_hits_total[5m]) + rate(nanoserve_prefix_cache_misses_total[5m])), 1e-9)",
+          "refId": "A",
+          "legendFormat": "hit rate"
+        }
+      ]
+    },
+    {
+      "type": "stat",
+      "id": 11,
+      "title": "cache size",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 6, "y": 25, "w": 6, "h": 5 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "colorMode": "value",
+        "graphMode": "area"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "decimals": 0,
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "nanoserve_prefix_cache_size", "refId": "A", "legendFormat": "entries" }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "id": 12,
+      "title": "hits vs misses (rate)",
+      "datasource": { "type": "prometheus", "uid": "nanoserve-prom" },
+      "gridPos": { "x": 12, "y": 25, "w": 12, "h": 5 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "ops",
+          "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true }
+        },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "rate(nanoserve_prefix_cache_hits_total[1m])", "refId": "A", "legendFormat": "hits" },
+        { "expr": "rate(nanoserve_prefix_cache_misses_total[1m])", "refId": "B", "legendFormat": "misses" }
+      ]
+    }
+  ]
+}
