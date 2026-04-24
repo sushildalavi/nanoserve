@@ -1,0 +1,129 @@
+"""orchestrates the eval sweep: for each quant mode, loads the model,
+computes perplexity + hellaswag accuracy, appends a row to
+`results/eval.csv`. MPS is preferred; falls back to CPU (which is slow
+but works for debugging).
+"""
+from __future__ import annotations
+
+import csv
+import datetime as dt
+import gc
+import platform
+import time
+from pathlib import Path
+
+import torch
+
+from nanoserve.config import RESULTS_DIR, TINYLLAMA_HF
+from nanoserve.eval.hellaswag import load_items, score_items
+from nanoserve.eval.perplexity import compute_perplexity, load_corpus, load_model
+
+EVAL_CSV = RESULTS_DIR / "eval.csv"
+EVAL_FIELDS = [
+    "timestamp",
+    "model",
+    "quant_mode",
+    "device",
+    "ppl",
+    "ppl_corpus",
+    "ppl_tokens",
+    "hs_accuracy",
+    "hs_n",
+    "hs_source",
+    "load_seconds",
+    "ppl_seconds",
+    "hs_seconds",
+    "torch_version",
+    "host",
+]
+
+
+def _pick_device() -> torch.device:
+    if torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _free_model(model) -> None:
+    del model
+    gc.collect()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
+
+def run_eval(
+    quant_modes: list[str],
+    model_path: str = TINYLLAMA_HF.path,
+    max_hs_items: int = 100,
+    prefer_wikitext: bool = True,
+    prefer_hellaswag: bool = True,
+    append_csv: bool = True,
+) -> list[dict]:
+    """run the full eval across `quant_modes`, return a list of per-mode
+    result dicts. optionally appends each row to `results/eval.csv`.
+    """
+    device = _pick_device()
+    corpus = load_corpus(prefer_wikitext=prefer_wikitext)
+    ppl_corpus_name = "wikitext-2-val-slice" if prefer_wikitext and len(corpus) > 20_000 else "fixture"
+    hs_items = load_items(prefer_hellaswag=prefer_hellaswag, max_items=max_hs_items)
+    hs_source = "hellaswag-val" if prefer_hellaswag and len(hs_items) > 12 else "cloze-fixture"
+
+    if append_csv:
+        Path(EVAL_CSV).parent.mkdir(parents=True, exist_ok=True)
+        new_file = not EVAL_CSV.exists()
+        csv_fh = open(EVAL_CSV, "a", newline="")
+        writer = csv.DictWriter(csv_fh, fieldnames=EVAL_FIELDS)
+        if new_file:
+            writer.writeheader()
+    else:
+        csv_fh = None
+        writer = None
+
+    rows: list[dict] = []
+    try:
+        for mode in quant_modes:
+            print(f"==> eval {mode} on {device}")
+            t0 = time.perf_counter()
+            model, tokenizer = load_model(mode, model_path, device)
+            t_load = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            ppl = compute_perplexity(model, tokenizer, corpus, device)
+            t_ppl = time.perf_counter() - t0
+
+            t0 = time.perf_counter()
+            hs = score_items(model, tokenizer, hs_items, device)
+            t_hs = time.perf_counter() - t0
+
+            row = {
+                "timestamp": dt.datetime.utcnow().isoformat(timespec="seconds") + "Z",
+                "model": Path(model_path).name,
+                "quant_mode": mode,
+                "device": str(device),
+                "ppl": f"{ppl['ppl']:.4f}",
+                "ppl_corpus": ppl_corpus_name,
+                "ppl_tokens": ppl["tokens"],
+                "hs_accuracy": f"{hs['accuracy']:.4f}",
+                "hs_n": int(hs["n"]),
+                "hs_source": hs_source,
+                "load_seconds": f"{t_load:.2f}",
+                "ppl_seconds": f"{t_ppl:.2f}",
+                "hs_seconds": f"{t_hs:.2f}",
+                "torch_version": torch.__version__,
+                "host": platform.node(),
+            }
+            rows.append(row)
+            if writer is not None:
+                writer.writerow(row)
+                csv_fh.flush()
+
+            print(
+                f"    ppl={row['ppl']:>8}  hs_acc={row['hs_accuracy']:>6}  "
+                f"({int(hs['n'])} items, {ppl_corpus_name}/{hs_source})"
+            )
+            _free_model(model)
+    finally:
+        if csv_fh is not None:
+            csv_fh.close()
+
+    return rows

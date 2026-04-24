@@ -3,8 +3,10 @@ import typer
 app = typer.Typer(help="nanoserve cli", no_args_is_help=True)
 baseline_app = typer.Typer(help="run a baseline backend end-to-end")
 bench_app = typer.Typer(help="run benchmark workloads")
+eval_app = typer.Typer(help="run the quality eval harness")
 app.add_typer(baseline_app, name="baseline")
 app.add_typer(bench_app, name="bench")
+app.add_typer(eval_app, name="eval")
 
 
 @app.command("serve")
@@ -131,6 +133,49 @@ def baseline_nanoserve(
 @bench_app.command("sweep")
 def bench_sweep():
     typer.echo("sweep not implemented yet")
+
+
+@eval_app.command("all")
+def eval_all(
+    quant: str = typer.Option(
+        "fp16,int8,int4",
+        help="comma-separated list of quant modes. supported: fp16,int8,int4,torchao_int8",
+    ),
+    hs_items: int = 100,
+    offline: bool = typer.Option(
+        False,
+        help="skip huggingface datasets loads; use the committed fallback fixtures",
+    ),
+):
+    """run perplexity + hellaswag on the given quant modes and append
+    one row per mode to results/eval.csv. quant modes are run in the
+    listed order, model is unloaded between each to keep peak memory
+    bounded.
+    """
+    from nanoserve.eval.runner import run_eval
+
+    modes = [m.strip() for m in quant.split(",") if m.strip()]
+    run_eval(
+        quant_modes=modes,
+        max_hs_items=hs_items,
+        prefer_wikitext=not offline,
+        prefer_hellaswag=not offline,
+    )
+
+
+@eval_app.command("ppl")
+def eval_ppl(quant: str = "fp16", offline: bool = False):
+    """just perplexity, one quant mode, no csv write."""
+    import torch
+
+    from nanoserve.config import TINYLLAMA_HF
+    from nanoserve.eval.perplexity import compute_perplexity, load_corpus, load_model
+
+    device = torch.device("mps" if torch.backends.mps.is_available() else "cpu")
+    corpus = load_corpus(prefer_wikitext=not offline)
+    model, tok = load_model(quant, TINYLLAMA_HF.path, device)
+    r = compute_perplexity(model, tok, corpus, device)
+    typer.echo(f"ppl={r['ppl']:.4f} nll={r['nll']:.4f} tokens={r['tokens']}")
 
 
 if __name__ == "__main__":
