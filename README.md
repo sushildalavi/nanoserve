@@ -93,6 +93,8 @@ This is the whole point of the project. Every technique is added with its on/off
 | nanoserve  | **int8** | on     | closed-loop c=4  | 0.13 | 897 ms     | 1.5 s    | 33.5 s   | 1.5          | 3.23      |
 | nanoserve  | **int4** | off    | closed-loop c=1  | 0.02 | 661 ms     | 883 ms   | 57.3 s   | 1.7          | 1.00      |
 | nanoserve  | **int4** | on     | poisson λ=2      | 0.07 | 174 s      | 305 s    | 336 s    | 1.6          | 3.33      |
+| **mlx**    | fp16   | n/a      | closed-loop c=1  | 4.62 | 100 ms     | 117 ms   | 978 ms   | 36.9         | —         |
+| **mlx**    | **int4** | n/a    | closed-loop c=1  | **8.41** | **58 ms** | 70 ms  | **432 ms**   | **136.3**    | —         |
 
 **Phase 3B paired sweep — fcfs vs synchronized admission, fp16 + int8 (poisson λ=2, c=4, n=20, max_new=32):**
 
@@ -375,7 +377,27 @@ pip install -e '.[mlx]'
 bash scripts/run_phase6a_sweep.sh   # paired fp16-mlx + int4-mlx serial runs
 ```
 
-The sweep writes MLX rows into the same [`results/ablations.csv`](results/ablations.csv) for apples-to-apples comparison with the pytorch-MPS int4 row from Phase 5B. The framing of the question is what makes this a valuable ablation even before the numbers land: *"same model, same quant, different runtime — is the gap platform or implementation?"* Whatever the answer, it closes the Phase 3D hypothesis.
+**The measured comparison (M3 Air, TinyLlama-1.1B-Chat-v1.0, serial c=1, n=30, max_new=64):**
+
+| runtime       | quant | rps       | p50 TTFT | decode tok/s | mem peak  |
+|---------------|-------|-----------|----------|--------------|-----------|
+| pytorch-MPS   | fp16  | 0.866     | 63 ms    | 37.6         | 1556 MB   |
+| **MLX**       | fp16  | **4.62**  | 100 ms   | 36.9         | **392 MB**    |
+| pytorch-MPS   | int4  | 0.022     | 661 ms   | 1.67         | 262 MB    |
+| **MLX**       | int4  | **8.41**  | 58 ms    | **136.3**    | 608 MB    |
+
+Three results worth their own resume bullet:
+
+1. **The Phase 3D platform-constraint hypothesis is experimentally confirmed.** MLX int4 runs at **136 decode tok/s** vs pytorch-MPS int4's **1.67 tok/s** — an **82× speedup** on decode and **380×** on sustained rps. Same model, same quant level, same hardware; only the runtime changes. The dequant tax that made int4 net-negative on pytorch-MPS disappears on a runtime that has native Metal int4 matmul kernels.
+
+2. **On MLX, int4 actually beats fp16.** MLX int4 is **1.8× faster on rps and 3.7× faster on decode** than MLX fp16. This is the regime flip Phase 3A predicted but couldn't produce — on the right runtime, int4 quantization pays for itself, because the matmul runs in native int4 and memory bandwidth savings translate to throughput. The flip is real, it just needed a different matmul path.
+
+3. **MLX fp16 is 5.3× faster rps than pytorch-MPS fp16 at identical per-token decode speed (~37 tok/s both).** The pytorch engine isn't slow at token generation — it's slow at the serial-request path because of scheduler, queue, and driver-thread overhead that MLX's direct `stream_generate` doesn't carry. Phase 3B's per-step timing (`step_overhead_p50 < 20 ms`) hinted at this; the MLX comparison makes it concrete.
+
+**The honest caveat:** the MLX backend is serial only. Real continuous batching in MLX would require re-implementing the Phase 2/3 scheduler against `mlx.core` arrays. That's a separate multi-day port. The point of Phase 6A was platform isolation, not a full engine replacement — and on that narrow question the numbers are decisive.
+
+**The closing Phase 3A → 3D → 6A narrative as one portfolio arc:**
+> *"Implemented hand-rolled int8 and int4 weight-only quantization on pytorch-MPS. Both were net-negative on throughput. Built per-step timing instrumentation, diagnosed the regression as platform-level (no native int8/int4 matmul on MPS → dequant-to-fp16 tax dominates savings). Tested the diagnosis by porting the inference path to Apple's MLX framework, which has native Metal int4 kernels. MLX int4 runs **82× faster on decode, 380× faster on rps** than the pytorch path, and **1.8× faster rps than MLX fp16** — confirming the gap was runtime, not implementation. Three commits, one honest writeup."*
 
 ### Phase 6B — container + Kubernetes scaffolding
 
