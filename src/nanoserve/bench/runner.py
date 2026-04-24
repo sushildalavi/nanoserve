@@ -29,6 +29,9 @@ def _make_backend(model: ModelSpec):
             admission_policy=model.admission_policy,
             prefix_cache_capacity=model.prefix_cache_capacity,
         )
+    if model.backend == "mlx":
+        from nanoserve.mlx_engine.engine import MLXBackend
+        return MLXBackend(model, quant_mode=model.quant_mode)
     raise ValueError(f"unknown backend: {model.backend}")
 
 

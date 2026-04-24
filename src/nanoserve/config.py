@@ -84,3 +84,20 @@ def tinyllama_nanoserve(
         admission_policy=admission_policy,
         prefix_cache_capacity=prefix_cache_capacity,
     )
+
+
+def tinyllama_mlx(quant_mode: str = "fp16") -> ModelSpec:
+    """TinyLlama served via MLX (Apple's native ML framework).
+
+    the point of this backend is the int4 path — MLX has native Metal
+    int4 matmul kernels, which the pytorch-MPS path does not, so int4
+    on MLX is expected to be a real speedup over fp16 rather than the
+    regression the pytorch int4 path shows.
+    """
+    return ModelSpec(
+        name="tinyllama-1.1b-chat",
+        backend="mlx",
+        path="TinyLlama/TinyLlama-1.1B-Chat-v1.0",
+        quant=quant_mode,
+        quant_mode=quant_mode,
+    )
