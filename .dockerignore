@@ -17,5 +17,6 @@ tests
 scripts
 vendor
 prompts/eval
-README.md
 !src
+!README.md
+!pyproject.toml
