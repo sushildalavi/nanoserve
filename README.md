@@ -1,9 +1,5 @@
 # nanoserve
 
-An OpenAI-compatible LLM serving engine built from scratch, with continuous batching, paged KV cache, prefix caching, streaming, and observability on Apple Silicon. Benchmarked against an honest native ceiling (llama.cpp Metal) and a naive single-stream baseline (HuggingFace Transformers on MPS).
-
-Runs on an M3 MacBook Air. No CUDA, no cloud, no Kubernetes. The interesting parts are the scheduler, the KV cache layout, and the numbers under load.
-
 ## What's in the box
 
 - OpenAI-compatible streaming API (FastAPI + SSE) — `POST /v1/chat/completions`, stream and non-stream.
